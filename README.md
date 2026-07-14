@@ -71,17 +71,20 @@ clients can't opt out of metering), budgets, and audit trail. The
 supported agent:
 
 ```sh
-# point the gateway at your model server (defaults target a homelab vLLM)
-make k3d-deploy OPENAI_UPSTREAM=https://vllm.internal OPENAI_MODEL=your/model
+# point the gateway at your OpenAI-compatible model server
+make k3d-deploy OPENAI_UPSTREAM=https://your-vllm.example OPENAI_MODEL=your/model
 make e2e-pi                           # governed completion, metering, netpol — end to end
 ./bin/paddock run pi                  # interactive pi session in a sandbox
 ```
 
 ## Deploying to your own cluster
 
+There are no published container images yet — build them from source and push
+to a registry your cluster can pull from:
+
 ```sh
-# 1. Build and push the images to your registry
-make push-harbor REGISTRY=harbor.internal TAG=$(git rev-parse --short HEAD)
+# 1. Build and push the images
+make push REGISTRY=<your-registry> TAG=$(git rev-parse --short HEAD)
 
 # 2. The real provider key lives in one Secret, gateway-side only
 kubectl create namespace paddock
@@ -90,14 +93,17 @@ kubectl -n paddock create secret generic paddock-anthropic \
 
 # 3. Install
 helm upgrade --install paddock deploy/helm/paddock -n paddock \
-  -f deploy/helm/paddock/values-homelab.yaml \
-  --set image.tag=<tag> --set agentImage=<registry>/paddock/agent-claude:<tag>
+  --set image.repository=<your-registry>/paddock/paddock \
+  --set image.tag=<tag> \
+  --set agentImage=<your-registry>/paddock/agent-claude:<tag>
 ```
 
-`values-homelab.yaml` shows a full example (traefik ingress, cert-manager, persistent
-SQLite on local-path). An ArgoCD `Application` example lives in
-[`deploy/argocd/`](deploy/argocd). On macOS, add your registry to Docker's insecure
-registries (or trust its CA) before pushing to a self-signed Harbor.
+See `deploy/helm/paddock/values.yaml` for the full surface: ingress (put the
+server behind one and hand developers `PADDOCK_SERVER`), persistent SQLite,
+an OpenAI-compatible upstream for pi (`gateway.openai.*`, including a
+`caConfigMap` for private CAs), and the server-side MCP registry. An ArgoCD
+`Application` example lives in [`deploy/argocd/`](deploy/argocd). If your
+registry uses a self-signed CA, trust it in Docker before pushing.
 
 ## Open core
 

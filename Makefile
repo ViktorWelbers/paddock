@@ -17,7 +17,7 @@ OPENAI_MODEL    ?= cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit
 OPENAI_CA       ?= $(HOME)/Code/infrastructure/k3s/cert-manager/k8s-home-ca.crt
 
 .PHONY: build test vet lint clean helm-lint docker-build \
-        k3d-up k3d-down k3d-import k3d-deploy dev-up e2e e2e-pi push-harbor
+        k3d-up k3d-down k3d-import k3d-deploy dev-up e2e e2e-pi push
 
 build:
 	@mkdir -p $(BIN_DIR)
@@ -48,7 +48,7 @@ docker-build:
 	docker build -t $(REGISTRY)/$(AGENT_IMG):$(TAG) -f Dockerfile.agent .
 	docker build -t $(REGISTRY)/$(AGENT_PI_IMG):$(TAG) -f Dockerfile.agent-pi .
 
-push-harbor: docker-build
+push: docker-build
 	docker push $(REGISTRY)/$(IMG):$(TAG)
 	docker push $(REGISTRY)/$(AGENT_IMG):$(TAG)
 	docker push $(REGISTRY)/$(AGENT_PI_IMG):$(TAG)
