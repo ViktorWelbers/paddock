@@ -1,0 +1,9 @@
+.git
+bin/
+*.db
+docs/
+deploy/
+scripts/
+!scripts/agent-pi-launcher.sh
+Dockerfile*
+.dockerignore

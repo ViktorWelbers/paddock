@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}
+---
+# The server creates and tears down per-session namespaces with their pods,
+# network policies and quotas. Cluster-scoped because session namespaces are
+# created dynamically.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-provisioner
+rules:
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [create, delete, get]
+  - apiGroups: [""]
+    resources: [pods, resourcequotas]
+    verbs: [create, delete, get, list]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [create, delete, get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-provisioner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}
+    namespace: {{ .Release.Namespace }}

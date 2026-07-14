@@ -1,0 +1,61 @@
+image:
+  repository: ghcr.io/paddock/paddock
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Image spawned inside session sandboxes (Claude Code preinstalled).
+agentImage: ghcr.io/paddock/agent-claude:latest
+# Image for the pi agent (OpenAI-compatible models through the gateway).
+# Empty = `paddock run pi` is rejected. Requires gateway.openai.upstream.
+agentImagePi: ""
+
+server:
+  port: 8080
+  # Dev convenience: seed a 'default' budget with this USD limit (0 disables).
+  seedBudgetUSD: 25
+  resources: {}
+
+gateway:
+  port: 8081
+  upstreamAnthropic: https://api.anthropic.com
+  # Name of an existing Secret with key ANTHROPIC_API_KEY. The real provider
+  # key lives only here — never inside sandboxes.
+  existingSecret: paddock-anthropic
+  # OpenAI-compatible upstream (vLLM, llama.cpp, ...) for agents like pi.
+  openai:
+    # e.g. https://vllm.internal — empty disables the /openai proxy path.
+    upstream: ""
+    # Model id the upstream serves; pinned into pi sandboxes.
+    model: ""
+    # Optional Secret with key OPENAI_API_KEY (self-hosted upstreams are
+    # often keyless — leave empty to send no credentials upstream).
+    existingSecret: ""
+    # Optional ConfigMap with key ca.crt when the upstream sits behind a
+    # private CA (e.g. cert-manager's ca-issuer).
+    caConfigMap: ""
+  resources: {}
+  # Server-side MCP allowlist. Empty = MCP disabled. Each entry becomes part
+  # of /mcp/registry.json; credential_env names a key in credentialsSecret.
+  mcpRegistry:
+    servers: []
+    # servers:
+    #   - name: github
+    #     url: https://mcp.example.internal/github
+    #     credential_env: GITHUB_MCP_TOKEN
+    credentialsSecret: ""
+
+# Expose the server API (session CRUD) outside the cluster.
+ingress:
+  enabled: false
+  className: traefik
+  host: paddock.internal
+  annotations: {}
+  tls:
+    enabled: false
+
+# SQLite lives on a shared volume between the server and gateway containers.
+# emptyDir is fine for evaluation; set persistence.enabled for anything real.
+persistence:
+  enabled: false
+  size: 1Gi
+  storageClassName: ""

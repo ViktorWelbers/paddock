@@ -1,0 +1,9 @@
+{{- if .Values.gateway.mcpRegistry.servers }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-mcp-registry
+data:
+  registry.json: |
+    {{ dict "servers" .Values.gateway.mcpRegistry.servers | toJson }}
+{{- end }}

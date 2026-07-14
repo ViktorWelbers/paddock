@@ -1,0 +1,6 @@
+apiVersion: v2
+name: paddock
+description: Self-hosted governance plane for coding agents — budgets, sandboxes, server-side MCP, Rego policies, audit.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

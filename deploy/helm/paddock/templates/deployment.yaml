@@ -1,0 +1,155 @@
+# Server and gateway share one pod because MVP storage is a single SQLite
+# file. Postgres support (roadmap M3) unlocks separate deployments.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: paddock
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # SQLite: never two writers
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: paddock
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: paddock
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        # Sandbox NetworkPolicies select this label as their only egress peer.
+        paddock.dev/component: gateway
+    spec:
+      serviceAccountName: {{ .Release.Name }}
+      securityContext:
+        # distroless :nonroot uid; fsGroup lets it write the SQLite volume.
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+        - name: server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/paddock-server"]
+          args:
+            - --addr=:{{ .Values.server.port }}
+            - --db=/data/paddock.db
+            - --agent-image={{ .Values.agentImage }}
+            {{- if .Values.agentImagePi }}
+            - --agent-images=pi={{ .Values.agentImagePi }}
+            {{- end }}
+            - --gateway-url=http://{{ .Release.Name }}-gateway.{{ .Release.Namespace }}.svc:{{ .Values.gateway.port }}/anthropic
+            - --openai-gateway-url=http://{{ .Release.Name }}-gateway.{{ .Release.Namespace }}.svc:{{ .Values.gateway.port }}/openai/v1
+            {{- if .Values.gateway.openai.model }}
+            - --openai-model={{ .Values.gateway.openai.model }}
+            {{- end }}
+            - --seed-budget-usd={{ .Values.server.seedBudgetUSD }}
+          ports:
+            - containerPort: {{ .Values.server.port }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.server.port }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.server.port }}
+            initialDelaySeconds: 5
+          {{- with .Values.server.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+        - name: gateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/paddock-gateway"]
+          args:
+            - --addr=:{{ .Values.gateway.port }}
+            - --db=/data/paddock.db
+            - --upstream-anthropic={{ .Values.gateway.upstreamAnthropic }}
+            {{- if .Values.gateway.openai.upstream }}
+            - --upstream-openai={{ .Values.gateway.openai.upstream }}
+            {{- if .Values.gateway.openai.caConfigMap }}
+            - --upstream-openai-ca=/openai-ca/ca.crt
+            {{- end }}
+            {{- end }}
+            - --policies=/policies
+            {{- if .Values.gateway.mcpRegistry.servers }}
+            - --mcp-registry=/mcp/registry.json
+            {{- end }}
+          env:
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gateway.existingSecret }}
+                  key: ANTHROPIC_API_KEY
+            {{- if .Values.gateway.openai.existingSecret }}
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gateway.openai.existingSecret }}
+                  key: OPENAI_API_KEY
+            {{- end }}
+          {{- if .Values.gateway.mcpRegistry.credentialsSecret }}
+          envFrom:
+            # MCP server credentials, referenced by credential_env in the
+            # registry. Brokered gateway-side; never visible to sandboxes.
+            - secretRef:
+                name: {{ .Values.gateway.mcpRegistry.credentialsSecret }}
+          {{- end }}
+          ports:
+            - containerPort: {{ .Values.gateway.port }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.gateway.port }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.gateway.port }}
+            initialDelaySeconds: 5
+          {{- with .Values.gateway.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: policies
+              mountPath: /policies
+              readOnly: true
+            {{- if .Values.gateway.mcpRegistry.servers }}
+            - name: mcp-registry
+              mountPath: /mcp
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.gateway.openai.upstream .Values.gateway.openai.caConfigMap }}
+            - name: openai-ca
+              mountPath: /openai-ca
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: policies
+          configMap:
+            name: {{ .Release.Name }}-policies
+        {{- if .Values.gateway.mcpRegistry.servers }}
+        - name: mcp-registry
+          configMap:
+            name: {{ .Release.Name }}-mcp-registry
+        {{- end }}
+        {{- if and .Values.gateway.openai.upstream .Values.gateway.openai.caConfigMap }}
+        - name: openai-ca
+          configMap:
+            name: {{ .Values.gateway.openai.caConfigMap }}
+        {{- end }}
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

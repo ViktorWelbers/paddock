@@ -1,0 +1,29 @@
+# Example ArgoCD Application for GitOps deployment (matches the homelab
+# app-of-apps pattern). Not applied by the helm chart; copy it into the
+# infrastructure repo's k3s/argocd/ directory when ready.
+#
+# Prerequisites:
+#   - images pushed to harbor.internal/paddock/ (make push-harbor TAG=<tag>)
+#   - Secret paddock-anthropic with key ANTHROPIC_API_KEY in the paddock namespace
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: paddock
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/viktorwelbers/paddock
+    targetRevision: main
+    path: deploy/helm/paddock
+    helm:
+      valueFiles:
+        - values-homelab.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: paddock
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # No automated sync while image tags are pushed ad hoc; sync manually
+    # after each push. Enable automation once tags are immutable (CI).
