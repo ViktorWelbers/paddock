@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paddock</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏇</text></svg>">
+<style>
+  :root {
+    --surface: #fcfcfb; --surface-2: #f4f4f2; --border: #e4e3df;
+    --text: #0b0b0b; --text-2: #52514e; --text-3: #8a8984;
+    --accent: #2a78d6; --meter-track: #e8e7e3;
+    --good: #0ca30c; --warn: #fab219; --crit: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #1a1a19; --surface-2: #232322; --border: #33322f;
+      --text: #ffffff; --text-2: #c3c2b7; --text-3: #8a8984;
+      --accent: #3987e5; --meter-track: #2c2b29;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--surface); color: var(--text);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 24px; max-width: 1080px; margin: 0 auto;
+  }
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px; }
+  header h1 { font-size: 20px; letter-spacing: -0.01em; }
+  header .sub { color: var(--text-2); }
+  header .refresh { margin-left: auto; color: var(--text-3); font-size: 12px; }
+  h2 { font-size: 13px; font-weight: 600; text-transform: uppercase;
+       letter-spacing: 0.06em; color: var(--text-2); margin: 24px 0 10px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+  .tile { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; background: var(--surface); }
+  .tile .name { color: var(--text-2); font-size: 12px; margin-bottom: 4px; }
+  .tile .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile .value small { font-size: 13px; font-weight: 400; color: var(--text-2); }
+  .meter { height: 6px; border-radius: 4px; background: var(--meter-track); margin-top: 10px; overflow: hidden; }
+  .meter > i { display: block; height: 100%; border-radius: 4px; background: var(--accent); }
+  .tile .status { font-size: 12px; margin-top: 6px; color: var(--text-2); }
+  .tile .status.warn { color: var(--warn); }
+  .tile .status.crit { color: var(--crit); }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 8px 12px; white-space: nowrap; }
+  th { font-size: 12px; color: var(--text-2); font-weight: 500;
+       border-bottom: 1px solid var(--border); background: var(--surface-2); }
+  td { border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: 0; }
+  tbody tr.sel { background: var(--surface-2); }
+  tbody tr.click { cursor: pointer; }
+  tbody tr.click:hover { background: var(--surface-2); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  .chip { display: inline-block; border: 1px solid var(--border); border-radius: 999px;
+          padding: 0 8px; font-size: 12px; color: var(--text-2); }
+  .payload { color: var(--text-2); white-space: normal; word-break: break-word; }
+  .empty { color: var(--text-3); padding: 14px 16px; }
+  #events-title span { color: var(--text-3); font-weight: 400; text-transform: none; letter-spacing: 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Paddock</h1>
+  <span class="sub">governance plane — read-only</span>
+  <span class="refresh" id="refresh"></span>
+</header>
+
+<h2>Budgets</h2>
+<div class="tiles" id="budgets"><div class="empty">loading…</div></div>
+
+<h2>Sessions</h2>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>ID</th><th>User</th><th>Agent</th><th>Budget</th><th>Status</th><th>Created</th></tr></thead>
+    <tbody id="sessions"><tr><td class="empty" colspan="6">loading…</td></tr></tbody>
+  </table>
+</div>
+
+<h2 id="events-title">Audit trail <span>— select a session</span></h2>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Time</th><th>Kind</th><th>Actor</th><th style="width:100%">Payload</th></tr></thead>
+    <tbody id="events"><tr><td class="empty" colspan="4">no session selected</td></tr></tbody>
+  </table>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const usd = n => "$" + Number(n).toFixed(n < 0.1 && n > 0 ? 4 : 2);
+let selected = null;
+
+async function get(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(path + ": " + r.status);
+  return r.json();
+}
+
+function renderBudgets(budgets) {
+  if (!budgets.length) { $("budgets").innerHTML = '<div class="empty">no budgets</div>'; return; }
+  $("budgets").innerHTML = budgets.map(b => {
+    const frac = b.limit_usd > 0 ? Math.min(b.spent_usd / b.limit_usd, 1) : 0;
+    const pct = (frac * 100).toFixed(frac > 0 && frac < 0.01 ? 1 : 0);
+    // Status is never color alone: the text carries the state too.
+    const state = frac >= 1 ? ["crit", "▲ limit reached"] :
+                  frac >= 0.8 ? ["warn", "▲ nearing limit"] : ["", pct + "% used"];
+    return `<div class="tile">
+      <div class="name">${esc(b.name)}${b.parent_id ? " · child of " + esc(b.parent_id) : ""}</div>
+      <div class="value">${usd(b.spent_usd)} <small>of ${usd(b.limit_usd)}</small></div>
+      <div class="meter" role="meter" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"
+           aria-label="${esc(b.name)} budget used"><i style="width:${pct}%"></i></div>
+      <div class="status ${state[0]}">${state[1]}</div>
+    </div>`;
+  }).join("");
+}
+
+function renderSessions(sessions) {
+  if (!sessions.length) { $("sessions").innerHTML = '<tr><td class="empty" colspan="6">no sessions yet</td></tr>'; return; }
+  $("sessions").innerHTML = sessions.map(s => `
+    <tr class="click ${s.id === selected ? "sel" : ""}" data-id="${esc(s.id)}">
+      <td class="mono">${esc(s.id)}</td><td>${esc(s.user)}</td><td>${esc(s.agent)}</td>
+      <td>${esc(s.budget_id)}</td><td><span class="chip">${esc(s.status)}</span></td>
+      <td>${new Date(s.created_at).toLocaleString()}</td>
+    </tr>`).join("");
+  for (const tr of $("sessions").querySelectorAll("tr.click"))
+    tr.addEventListener("click", () => selectSession(tr.dataset.id));
+}
+
+async function selectSession(id) {
+  selected = id;
+  $("events-title").innerHTML = `Audit trail <span>— session ${esc(id)}</span>`;
+  const events = await get(`/v1/sessions/${encodeURIComponent(id)}/events`);
+  $("events").innerHTML = events.length ? events.map(e => `
+    <tr>
+      <td>${new Date(e.ts).toLocaleTimeString()}</td>
+      <td><span class="chip">${esc(e.kind)}</span></td>
+      <td>${esc(e.actor)}</td>
+      <td class="payload mono">${esc(JSON.stringify(e.payload ?? {}))}</td>
+    </tr>`).join("") : '<tr><td class="empty" colspan="4">no events</td></tr>';
+  refresh(false);
+}
+
+async function refresh(reloadEvents = true) {
+  try {
+    const [budgets, sessions] = await Promise.all([get("/v1/budgets"), get("/v1/sessions")]);
+    renderBudgets(budgets);
+    renderSessions(sessions);
+    if (reloadEvents && selected) selectSession(selected);
+    $("refresh").textContent = "updated " + new Date().toLocaleTimeString();
+  } catch (err) {
+    $("refresh").textContent = "refresh failed: " + err.message;
+  }
+}
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>

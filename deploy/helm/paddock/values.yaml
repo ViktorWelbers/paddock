@@ -59,3 +59,13 @@ persistence:
   enabled: false
   size: 1Gi
   storageClassName: ""
+
+# Standard scheduling and registry knobs for the control-plane pod.
+imagePullSecrets: []
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+serviceAccount:
+  # e.g. workload identity / IRSA annotations
+  annotations: {}

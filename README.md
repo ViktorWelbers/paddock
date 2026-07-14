@@ -1,5 +1,8 @@
 # Paddock
 
+[![ci](https://github.com/ViktorWelbers/paddock/actions/workflows/ci.yaml/badge.svg)](https://github.com/ViktorWelbers/paddock/actions/workflows/ci.yaml)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 **A self-hosted governance plane for coding agents.**
 
 Paddock spawns per-user sandboxes for agents like Claude Code and OpenCode on *your own* Kubernetes cluster, and puts a gateway between the agent and the outside world. Every model call is metered against a budget. Every tool and MCP call passes a policy check. Everything is written to an audit log your compliance team can hand to a regulator.
@@ -53,13 +56,13 @@ make build
 ./bin/paddock rm <id>                 # tear the sandbox down
 ```
 
-No further setup: the CLI finds the control plane on its own — `PADDOCK_SERVER`
-if set (the production path: platform teams expose the server behind an ingress,
-e.g. `https://paddock.internal`, and hand developers that one env var), else a
-server already on `localhost:8080`, else an automatic port-forward over your
-kubeconfig (`PADDOCK_KUBECONFIG` to override, `PADDOCK_NAMESPACE` to narrow the
-search). Inside the sandbox, Claude Code can only reach the Paddock gateway:
-no internet, no cluster API, no real keys.
+The CLI talks to the server at `PADDOCK_SERVER` (the production path: platform
+teams expose the server behind an ingress, e.g. `https://paddock.internal`, and
+hand developers that one env var), falling back to `localhost:8080`. On a dev
+cluster, `PADDOCK_PORT_FORWARD=1` lets it tunnel over your kubeconfig instead
+(`PADDOCK_KUBECONFIG` to override, `PADDOCK_NAMESPACE` to narrow the search).
+Inside the sandbox, Claude Code can only reach the Paddock gateway: no
+internet, no cluster API, no real keys.
 
 ### Any agent, any model server
 
@@ -76,6 +79,15 @@ make k3d-deploy OPENAI_UPSTREAM=https://your-vllm.example OPENAI_MODEL=your/mode
 make e2e-pi                           # governed completion, metering, netpol — end to end
 ./bin/paddock run pi                  # interactive pi session in a sandbox
 ```
+
+## Dashboard
+
+The server ships a read-only dashboard at its root URL (`/`): budgets with
+spend meters, sessions, and each session's audit trail. It's a single embedded
+HTML file — no extra deployment, no JS toolchain, works wherever the API is
+reachable.
+
+![Paddock dashboard](docs/img/dashboard.png)
 
 ## Deploying to your own cluster
 

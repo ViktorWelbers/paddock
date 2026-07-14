@@ -27,7 +27,12 @@
 
 ## M2 — Launchable OSS
 
-- [ ] Web dashboard (sessions, spend, audit trail) — read-only is enough
+- [x] Web dashboard (sessions, spend, audit trail) — read-only, embedded in the server at `/`
+- [ ] Server API authentication (today: keep it cluster-internal or behind ingress auth)
+- [ ] Sandbox reconciliation/GC: a control-plane restart with ephemeral storage
+      orphans session namespaces (observed live); reconcile namespaces against the
+      session store on startup
+- [ ] Server-side attach relay (websocket) so developers don't need pods/exec RBAC
 - [ ] Hierarchical budgets exposed in config (org/team/user)
 - [ ] Policy decision input schema pinned + documented; `opa test` examples
 - [ ] Docs site, quickstart that works on kind/k3d in <10 min

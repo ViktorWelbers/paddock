@@ -22,9 +22,9 @@ import (
 //     the server behind an ingress (e.g. https://paddock.internal) and
 //     hand developers that one env var.
 //  2. a paddock-server already reachable on localhost:8080.
-//  3. an automatic port-forward over the kubeconfig the CLI already uses
-//     for attach — so on any cluster with paddock installed, `paddock run`
-//     just works with zero setup.
+//  3. with PADDOCK_PORT_FORWARD=1 only: a port-forward over the operator's
+//     kubeconfig — a dev convenience, deliberately not on by default; a
+//     production CLI shouldn't silently tunnel into the cluster.
 //
 // Resolution failures are fatal: no command can do anything useful
 // without the server.
@@ -36,14 +36,19 @@ var serverURL = sync.OnceValue(func() string {
 	if healthy(local) {
 		return local
 	}
-	url, err := forwardToServer()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: no paddock server reachable: %v\n", err)
-		fmt.Fprintln(os.Stderr, "set PADDOCK_SERVER to your deployment's URL (e.g. https://paddock.internal),")
-		fmt.Fprintln(os.Stderr, "or point your kubeconfig at a cluster with paddock installed")
-		os.Exit(1)
+	if os.Getenv("PADDOCK_PORT_FORWARD") == "1" {
+		url, err := forwardToServer()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: port-forward failed: %v\n", err)
+			os.Exit(1)
+		}
+		return url
 	}
-	return url
+	fmt.Fprintln(os.Stderr, "error: no paddock server reachable")
+	fmt.Fprintln(os.Stderr, "set PADDOCK_SERVER to your deployment's URL (e.g. https://paddock.internal);")
+	fmt.Fprintln(os.Stderr, "for a dev cluster, PADDOCK_PORT_FORWARD=1 tunnels over your kubeconfig")
+	os.Exit(1)
+	return ""
 })
 
 func healthy(base string) bool {

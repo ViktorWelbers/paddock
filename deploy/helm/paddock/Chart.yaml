@@ -4,3 +4,10 @@ description: Self-hosted governance plane for coding agents — budgets, sandbox
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
+home: https://github.com/ViktorWelbers/paddock
+sources:
+  - https://github.com/ViktorWelbers/paddock
+keywords: [ai-agents, governance, budgets, opa, audit, sandbox]
+maintainers:
+  - name: Viktor Welbers
+    url: https://github.com/ViktorWelbers

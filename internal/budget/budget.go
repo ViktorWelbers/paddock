@@ -116,6 +116,23 @@ func (l *Ledger) Get(id string) (Budget, error) {
 	return b, err
 }
 
+func (l *Ledger) List() ([]Budget, error) {
+	rows, err := l.db.Query(`SELECT id, parent_id, name, limit_usd, spent_usd FROM budgets ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Budget
+	for rows.Next() {
+		var b Budget
+		if err := rows.Scan(&b.ID, &b.ParentID, &b.Name, &b.LimitUSD, &b.SpentUSD); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 // chain returns the budget and all its ancestors, leaf first.
 func (l *Ledger) chain(tx *sql.Tx, id string) ([]Budget, error) {
 	var out []Budget

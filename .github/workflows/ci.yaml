@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint deploy/helm/paddock
+      - run: helm template paddock deploy/helm/paddock > /dev/null
+      - run: helm template paddock deploy/helm/paddock -f deploy/helm/paddock/values-homelab.yaml > /dev/null
+
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t paddock:ci .
+      - run: docker build -t paddock-agent-pi:ci -f Dockerfile.agent-pi .
+      # Dockerfile.agent (Claude Code) is exercised too; it's the slowest, last.
+      - run: docker build -t paddock-agent-claude:ci -f Dockerfile.agent .

@@ -5,6 +5,7 @@ package api
 import (
 	"crypto/rand"
 	"database/sql"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -132,14 +133,25 @@ type Handler struct {
 	Config      Config
 }
 
+// dashboardHTML is the read-only web dashboard (sessions, budgets, audit
+// trail). Self-contained: no external assets, no build step.
+//
+//go:embed ui/index.html
+var dashboardHTML []byte
+
 func (h *Handler) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(dashboardHTML)
+	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
 	mux.HandleFunc("POST /v1/sessions", h.createSession)
 	mux.HandleFunc("GET /v1/sessions", h.listSessions)
 	mux.HandleFunc("GET /v1/sessions/{id}", h.getSession)
 	mux.HandleFunc("DELETE /v1/sessions/{id}", h.deleteSession)
 	mux.HandleFunc("GET /v1/sessions/{id}/events", h.sessionEvents)
+	mux.HandleFunc("GET /v1/budgets", h.listBudgets)
 	mux.HandleFunc("GET /v1/budgets/{id}", h.getBudget)
 	return mux
 }
@@ -281,6 +293,22 @@ func (h *Handler) sessionEvents(w http.ResponseWriter, r *http.Request) {
 		events = []audit.Event{}
 	}
 	writeJSON(w, http.StatusOK, events)
+}
+
+func (h *Handler) listBudgets(w http.ResponseWriter, _ *http.Request) {
+	budgets, err := h.Ledger.List()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	out := make([]map[string]any, 0, len(budgets))
+	for _, b := range budgets {
+		out = append(out, map[string]any{
+			"id": b.ID, "name": b.Name, "parent_id": b.ParentID,
+			"limit_usd": b.LimitUSD, "spent_usd": b.SpentUSD,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) getBudget(w http.ResponseWriter, r *http.Request) {

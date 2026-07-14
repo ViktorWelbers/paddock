@@ -17,6 +17,9 @@ spec:
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
       labels:
         app.kubernetes.io/name: paddock
         app.kubernetes.io/instance: {{ .Release.Name }}
@@ -24,6 +27,18 @@ spec:
         paddock.dev/component: gateway
     spec:
       serviceAccountName: {{ .Release.Name }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         # distroless :nonroot uid; fsGroup lets it write the SQLite volume.
         runAsUser: 65532
