@@ -56,11 +56,12 @@ make build
 ./bin/paddock rm <id>                 # tear the sandbox down
 ```
 
-The CLI talks to the server at `PADDOCK_SERVER` — platform teams expose the
-server behind an ingress (e.g. `https://paddock.internal`) and hand developers
-that one env var — falling back to `localhost:8080`, where the k3d dev loop
-maps the cluster ingress. That's the whole story: no port-forwards, no
-kubeconfig magic. Inside the sandbox, Claude Code can only reach the Paddock
+The CLI finds the server once and remembers it: platform teams expose the
+server behind an ingress (e.g. `https://paddock.internal`) and developers save
+it with `paddock config set server https://paddock.internal`. `PADDOCK_SERVER`
+overrides the saved value per shell (CI, one-offs), and with neither set the
+CLI falls back to `localhost:8080`, where the k3d dev loop maps the cluster
+ingress. That's the whole story: no port-forwards, no kubeconfig magic. Inside the sandbox, Claude Code can only reach the Paddock
 gateway: no internet, no cluster API, no real keys.
 
 ### Any agent, any model server
@@ -110,7 +111,8 @@ helm upgrade --install paddock deploy/helm/paddock -n paddock \
 ```
 
 See `deploy/helm/paddock/values.yaml` for the full surface: ingress (put the
-server behind one and hand developers `PADDOCK_SERVER`), persistent SQLite,
+server behind one; developers save the URL with `paddock config set server`),
+persistent SQLite,
 an OpenAI-compatible upstream for pi (`gateway.openai.*`, including a
 `caConfigMap` for private CAs), and the server-side MCP registry. An ArgoCD
 `Application` example lives in [`deploy/argocd/`](deploy/argocd). If your

@@ -6,6 +6,7 @@
 //	paddock rm <id>           tear a session down
 //	paddock budget [id]       show budget headroom
 //	paddock events <id>       show a session's audit trail
+//	paddock config            show/save CLI settings (e.g. the server URL)
 package main
 
 import (
@@ -62,6 +63,8 @@ func main() {
 		err = showBudget(id)
 	case "events":
 		err = withArg(os.Args[2:], showEvents)
+	case "config":
+		err = configCmd(os.Args[2:])
 	default:
 		usage()
 	}
@@ -72,7 +75,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: paddock run <agent> [--detach] | attach <id> [cmd...] | ls | rm <id> | budget [id] | events <id>")
+	fmt.Fprintln(os.Stderr, "usage: paddock run <agent> [--detach] | attach <id> [cmd...] | ls | rm <id> | budget [id] | events <id> | config [set server <url>]")
 	os.Exit(2)
 }
 
