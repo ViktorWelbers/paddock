@@ -32,7 +32,7 @@ func main() {
 	addr := flag.String("addr", ":8081", "listen address")
 	dbPath := flag.String("db", "paddock.db", "SQLite database path (shared with the server)")
 	upstream := flag.String("upstream-anthropic", "https://api.anthropic.com", "Anthropic API upstream")
-	upstreamOpenAI := flag.String("upstream-openai", "", "OpenAI-compatible upstream, e.g. https://vllm.internal (empty = disabled)")
+	upstreamOpenAI := flag.String("upstream-openai", "", "OpenAI-compatible upstream, e.g. https://vllm.example.com (empty = disabled)")
 	upstreamOpenAICA := flag.String("upstream-openai-ca", "", "PEM file with an extra CA to trust for the OpenAI upstream (private CAs)")
 	policiesDir := flag.String("policies", "policies", "directory of .rego policies")
 	mcpRegistry := flag.String("mcp-registry", "", "JSON file of allowlisted MCP servers (empty = MCP disabled)")

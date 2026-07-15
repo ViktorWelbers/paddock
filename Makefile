@@ -2,9 +2,9 @@ BINARIES := paddock-server paddock-gateway paddock
 BIN_DIR  := bin
 
 # Image naming. For k3d the registry prefix is unused (images are imported);
-# for the homelab, REGISTRY=harbor.internal.
+# to publish, set REGISTRY to your registry (e.g. ghcr.io/<you>).
 TAG        ?= dev
-REGISTRY   ?= harbor.internal
+REGISTRY   ?= registry.local
 IMG        ?= paddock/paddock
 AGENT_IMG  ?= paddock/agent-claude
 AGENT_PI_IMG ?= paddock/agent-pi
@@ -12,9 +12,11 @@ K3D_CLUSTER ?= paddock
 NAMESPACE  ?= paddock
 
 # OpenAI-compatible upstream for the pi agent (empty = pi disabled).
-OPENAI_UPSTREAM ?= https://vllm.internal
-OPENAI_MODEL    ?= cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit
-OPENAI_CA       ?= $(HOME)/Code/infrastructure/k3s/cert-manager/k8s-home-ca.crt
+# Point at your own model server, e.g. OPENAI_UPSTREAM=https://vllm.example.com
+OPENAI_UPSTREAM ?=
+OPENAI_MODEL    ?=
+# Path to a PEM CA bundle when the upstream uses a private CA (optional).
+OPENAI_CA       ?=
 
 .PHONY: build test vet lint clean helm-lint docker-build \
         k3d-up k3d-down k3d-import k3d-deploy dev-up e2e e2e-pi push
@@ -72,7 +74,7 @@ k3d-deploy:
 		--from-literal=ANTHROPIC_API_KEY=$${ANTHROPIC_API_KEY:-sk-ant-fake} \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@if [ -n "$(OPENAI_UPSTREAM)" ] && [ -f "$(OPENAI_CA)" ]; then \
-		kubectl -n $(NAMESPACE) create configmap homelab-ca \
+		kubectl -n $(NAMESPACE) create configmap openai-ca \
 			--from-file=ca.crt=$(OPENAI_CA) \
 			--dry-run=client -o yaml | kubectl apply -f -; \
 	fi
@@ -84,7 +86,7 @@ k3d-deploy:
 			--set agentImagePi=$(REGISTRY)/$(AGENT_PI_IMG):$(TAG) \
 			--set gateway.openai.upstream=$(OPENAI_UPSTREAM) \
 			--set gateway.openai.model=$(OPENAI_MODEL) \
-			$(if $(wildcard $(OPENAI_CA)),--set gateway.openai.caConfigMap=homelab-ca,)) \
+			$(if $(wildcard $(OPENAI_CA)),--set gateway.openai.caConfigMap=openai-ca,)) \
 		--wait --timeout 3m
 
 dev-up: k3d-up k3d-import k3d-deploy

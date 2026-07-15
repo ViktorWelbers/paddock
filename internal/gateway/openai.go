@@ -21,7 +21,7 @@ const maxRequestBody = 32 << 20
 // in here.
 type OpenAIProxy struct {
 	Backends
-	Upstream  *url.URL          // e.g. https://vllm.internal — the client's /v1/... path passes through
+	Upstream  *url.URL          // e.g. https://vllm.example.com — the client's /v1/... path passes through
 	APIKey    string            // optional; empty means the upstream is keyless
 	Transport http.RoundTripper // optional; e.g. a transport trusting a private CA
 }

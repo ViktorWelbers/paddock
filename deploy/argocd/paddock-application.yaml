@@ -1,9 +1,8 @@
-# Example ArgoCD Application for GitOps deployment (matches the homelab
-# app-of-apps pattern). Not applied by the helm chart; copy it into the
-# infrastructure repo's k3s/argocd/ directory when ready.
+# Example ArgoCD Application for GitOps deployment (app-of-apps friendly).
+# Copy into your GitOps repo and adjust the inline values.
 #
 # Prerequisites:
-#   - images pushed to harbor.internal/paddock/ (make push-harbor TAG=<tag>)
+#   - images pushed to a registry your cluster can pull from (make push REGISTRY=...)
 #   - Secret paddock-anthropic with key ANTHROPIC_API_KEY in the paddock namespace
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -13,17 +12,28 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/viktorwelbers/paddock
+    repoURL: https://github.com/ViktorWelbers/paddock
     targetRevision: main
     path: deploy/helm/paddock
     helm:
-      valueFiles:
-        - values-homelab.yaml
+      releaseName: paddock
+      values: |
+        image:
+          repository: <your-registry>/paddock/paddock
+          tag: <tag>
+        agentImage: <your-registry>/paddock/agent-claude:<tag>
+        # Optional: OpenAI-compatible upstream for the pi agent
+        # agentImagePi: <your-registry>/paddock/agent-pi:<tag>
+        # gateway:
+        #   openai:
+        #     upstream: http://your-model-server.namespace.svc
+        #     model: your/model
   destination:
     server: https://kubernetes.default.svc
     namespace: paddock
   syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
     syncOptions:
       - CreateNamespace=true
-    # No automated sync while image tags are pushed ad hoc; sync manually
-    # after each push. Enable automation once tags are immutable (CI).

@@ -13,7 +13,7 @@
 ## M1 — Core loop on a real cluster
 
 - [x] Container images: control plane (`Dockerfile`) + agent with Claude Code (`Dockerfile.agent`)
-- [x] Deploy server + gateway via helm (k3d dev loop: `make dev-up`; homelab: `values-homelab.yaml`)
+- [x] Deploy server + gateway via helm (k3d dev loop: `make dev-up`; GitOps: `deploy/argocd/`)
 - [x] In-cluster provisioning (`rest.InClusterConfig`), probes, graceful shutdown
 - [x] `paddock attach` (exec with TTY over the operator's kubeconfig); `paddock run claude` auto-attaches
 - [x] e2e smoke test (`make e2e`): session lifecycle, env injection, NetworkPolicy enforcement, proxy path, audit trail

@@ -47,12 +47,12 @@ kubectl -n "$NS" exec agent -- printenv PI_API_KEY | grep -q '^pdk_' \
   || fail "PI_API_KEY in sandbox is not a pdk_ session token"
 kubectl -n "$NS" exec agent -- printenv PADDOCK_MODEL || fail "PADDOCK_MODEL not set"
 
-step "netpol: sandbox cannot reach the upstream directly"
+step "netpol: sandbox has no egress besides the gateway"
 if kubectl -n "$NS" exec agent -- node -e '
-  fetch("https://vllm.internal/v1/models", {signal: AbortSignal.timeout(8000)})
+  fetch("https://example.com", {signal: AbortSignal.timeout(8000)})
     .then(() => process.exit(0)).catch(() => process.exit(1));
 ' >/dev/null 2>&1; then
-  fail "sandbox reached vllm.internal directly — NetworkPolicy is NOT enforced"
+  fail "sandbox reached example.com directly — NetworkPolicy is NOT enforced"
 fi
 echo "ok (direct egress blocked; only the gateway may talk to vLLM)"
 

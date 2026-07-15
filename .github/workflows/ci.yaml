@@ -24,7 +24,15 @@ jobs:
       - uses: azure/setup-helm@v4
       - run: helm lint deploy/helm/paddock
       - run: helm template paddock deploy/helm/paddock > /dev/null
-      - run: helm template paddock deploy/helm/paddock -f deploy/helm/paddock/values-homelab.yaml > /dev/null
+      # Exercise the conditional blocks: pi agent, openai upstream, ingress, PVC.
+      - run: >
+          helm template paddock deploy/helm/paddock
+          --set agentImagePi=example/agent-pi:ci
+          --set gateway.openai.upstream=http://models.svc
+          --set gateway.openai.model=example/model
+          --set gateway.openai.caConfigMap=openai-ca
+          --set ingress.enabled=true --set ingress.tls.enabled=true
+          --set persistence.enabled=true > /dev/null
 
   images:
     runs-on: ubuntu-latest

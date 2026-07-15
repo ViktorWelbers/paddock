@@ -23,7 +23,7 @@ gateway:
   existingSecret: paddock-anthropic
   # OpenAI-compatible upstream (vLLM, llama.cpp, ...) for agents like pi.
   openai:
-    # e.g. https://vllm.internal — empty disables the /openai proxy path.
+    # e.g. https://vllm.example.com — empty disables the /openai proxy path.
     upstream: ""
     # Model id the upstream serves; pinned into pi sandboxes.
     model: ""
