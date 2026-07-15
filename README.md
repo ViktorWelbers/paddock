@@ -56,6 +56,14 @@ make build
 ./bin/paddock rm <id>                 # tear the sandbox down
 ```
 
+Developers on a team with a running deployment don't need the repo at all:
+
+```sh
+go install github.com/viktorwelbers/paddock/cmd/paddock@latest
+paddock config set server https://paddock.internal   # your deployment's URL, once
+paddock run claude
+```
+
 The CLI finds the server once and remembers it: platform teams expose the
 server behind an ingress (e.g. `https://paddock.internal`) and developers save
 it with `paddock config set server https://paddock.internal`. `PADDOCK_SERVER`
