@@ -80,6 +80,83 @@ func TestRenderIsolationInvariants(t *testing.T) {
 	}
 }
 
+func TestRenderWorkspaceVolume(t *testing.T) {
+	res, err := Render(testSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := res.Pod
+	if pod.Spec.SecurityContext == nil || pod.Spec.SecurityContext.FSGroup == nil || *pod.Spec.SecurityContext.FSGroup != 10001 {
+		t.Error("pod needs fsGroup 10001 so the non-root agent can write the workspace volume")
+	}
+	if len(pod.Spec.Volumes) != 1 || pod.Spec.Volumes[0].EmptyDir == nil {
+		t.Fatal("workspace must be an emptyDir volume")
+	}
+	if limit := pod.Spec.Volumes[0].EmptyDir.SizeLimit; limit == nil || limit.String() != "2Gi" {
+		t.Errorf("workspace size limit = %v, want the 2Gi default", limit)
+	}
+	mounts := pod.Spec.Containers[0].VolumeMounts
+	if len(mounts) != 1 || mounts[0].MountPath != "/workspace" {
+		t.Errorf("workspace mount = %+v, want /workspace", mounts)
+	}
+}
+
+func TestRenderEgressProxyEnv(t *testing.T) {
+	spec := testSpec()
+	spec.EgressProxyURL = "http://paddock-gateway.paddock.svc:8082"
+	res, err := Render(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{}
+	for _, e := range res.Pod.Spec.Containers[0].Env {
+		env[e.Name] = e.Value
+	}
+	want := "http://paddock:pdk_test@paddock-gateway.paddock.svc:8082"
+	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		if env[name] != want {
+			t.Errorf("%s = %q, want session-token proxy URL", name, env[name])
+		}
+	}
+	for _, name := range []string{"NO_PROXY", "no_proxy"} {
+		if env[name] != "localhost,127.0.0.1,paddock-gateway.paddock.svc" {
+			t.Errorf("%s = %q: LLM traffic must bypass the CONNECT proxy", name, env[name])
+		}
+	}
+}
+
+func TestRenderNoProxyEnvWithoutEgressProxy(t *testing.T) {
+	res, err := Render(testSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range res.Pod.Spec.Containers[0].Env {
+		if e.Name == "HTTP_PROXY" || e.Name == "HTTPS_PROXY" {
+			t.Errorf("proxy env %s rendered without an egress proxy configured", e.Name)
+		}
+	}
+}
+
+func TestRenderNetpolPortScoping(t *testing.T) {
+	spec := testSpec()
+	spec.EgressProxyURL = "http://paddock-gateway.paddock.svc:8082"
+	res, err := Render(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ports := res.NetworkPolicy.Spec.Egress[0].Ports
+	if len(ports) != 2 {
+		t.Fatalf("gateway egress ports = %v, want exactly [8081 8082] — an open port list would expose the control-plane API", ports)
+	}
+	got := map[int32]bool{}
+	for _, p := range ports {
+		got[p.Port.IntVal] = true
+	}
+	if !got[8081] || !got[8082] {
+		t.Errorf("gateway egress ports = %v, want 8081 and 8082", ports)
+	}
+}
+
 func TestRenderRejectsIncompleteSpec(t *testing.T) {
 	spec := testSpec()
 	spec.GatewayURL = ""

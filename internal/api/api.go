@@ -109,11 +109,13 @@ func (s *Store) setStatus(id, status string) error {
 
 // Config carries the server's sandbox defaults.
 type Config struct {
-	AgentImage  string            // fallback image when the agent has no entry in AgentImages
-	AgentImages map[string]string // agent name → image, e.g. {"claude": ..., "pi": ...}
-	GatewayURL  string            // Anthropic-path gateway URL (ANTHROPIC_BASE_URL for claude)
-	OpenAIURL   string            // OpenAI-path gateway URL for openai-completions agents
-	OpenAIModel string            // model id pinned for those agents (empty = not configured)
+	AgentImage     string            // fallback image when the agent has no entry in AgentImages
+	AgentImages    map[string]string // agent name → image, e.g. {"claude": ..., "pi": ...}
+	GatewayURL     string            // Anthropic-path gateway URL (ANTHROPIC_BASE_URL for claude)
+	OpenAIURL      string            // OpenAI-path gateway URL for openai-completions agents
+	OpenAIModel    string            // model id pinned for those agents (empty = not configured)
+	EgressProxyURL string            // gateway CONNECT proxy for governed egress (empty = no egress)
+	WorkspaceSize  string            // /workspace emptyDir size limit (empty = sandbox default)
 }
 
 // imageFor picks the sandbox image for an agent; empty means unsupported.
@@ -212,14 +214,16 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = h.Provisioner.Create(r.Context(), sandbox.Spec{
-		SessionID:    sess.ID,
-		User:         sess.User,
-		Agent:        sess.Agent,
-		AgentImage:   image,
-		GatewayURL:   h.Config.GatewayURL,
-		OpenAIURL:    h.Config.OpenAIURL,
-		Model:        h.Config.OpenAIModel,
-		SessionToken: sess.Token,
+		SessionID:          sess.ID,
+		User:               sess.User,
+		Agent:              sess.Agent,
+		AgentImage:         image,
+		GatewayURL:         h.Config.GatewayURL,
+		OpenAIURL:          h.Config.OpenAIURL,
+		Model:              h.Config.OpenAIModel,
+		SessionToken:       sess.Token,
+		EgressProxyURL:     h.Config.EgressProxyURL,
+		WorkspaceSizeLimit: h.Config.WorkspaceSize,
 	})
 	if err != nil {
 		_ = h.Sessions.setStatus(sess.ID, "failed")

@@ -34,6 +34,8 @@ func main() {
 	gatewayURL := flag.String("gateway-url", "http://paddock-gateway.paddock.svc:8081/anthropic", "ANTHROPIC_BASE_URL value inside sandboxes")
 	openaiURL := flag.String("openai-gateway-url", "http://paddock-gateway.paddock.svc:8081/openai/v1", "gateway base URL for openai-completions agents (pi)")
 	openaiModel := flag.String("openai-model", "", "model id served by the gateway's OpenAI upstream (required to run the pi agent)")
+	egressProxyURL := flag.String("egress-proxy-url", "", "gateway CONNECT proxy URL injected as HTTP(S)_PROXY into sandboxes (empty = sandboxes get no egress)")
+	workspaceSize := flag.String("workspace-size-limit", "2Gi", "size limit of the per-session /workspace volume")
 	kubeconfig := flag.String("kubeconfig", "", "kubeconfig path; empty = in-cluster config if available, else no-op provisioner")
 	seedBudgetUSD := flag.Float64("seed-budget-usd", 25, "create a 'default' budget with this limit if none exists (dev convenience, 0 disables)")
 	flag.Parse()
@@ -73,11 +75,13 @@ func main() {
 		Audit:       auditStore,
 		Provisioner: newProvisioner(*kubeconfig),
 		Config: api.Config{
-			AgentImage:  *agentImage,
-			AgentImages: parseAgentImages(*agentImages),
-			GatewayURL:  *gatewayURL,
-			OpenAIURL:   *openaiURL,
-			OpenAIModel: *openaiModel,
+			AgentImage:     *agentImage,
+			AgentImages:    parseAgentImages(*agentImages),
+			GatewayURL:     *gatewayURL,
+			OpenAIURL:      *openaiURL,
+			OpenAIModel:    *openaiModel,
+			EgressProxyURL: *egressProxyURL,
+			WorkspaceSize:  *workspaceSize,
 		},
 	}
 

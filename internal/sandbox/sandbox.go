@@ -9,6 +9,9 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"slices"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
@@ -41,6 +44,13 @@ type Spec struct {
 	SessionToken string // session-scoped credential; never a real provider key
 	CPULimit     string // e.g. "2"
 	MemLimit     string // e.g. "4Gi"
+
+	// EgressProxyURL is the gateway's CONNECT proxy for governed internet
+	// access (package registries, git hosts — allowlisted and audited).
+	// Empty disables the proxy env: the sandbox then has no route out at all.
+	EgressProxyURL string
+	// WorkspaceSizeLimit caps the /workspace emptyDir (default 2Gi).
+	WorkspaceSizeLimit string
 }
 
 // agentEnv renders the provider env contract for the agent kind. The
@@ -63,7 +73,95 @@ func agentEnv(spec Spec) []corev1.EnvVar {
 			corev1.EnvVar{Name: "ANTHROPIC_API_KEY", Value: spec.SessionToken},
 		)
 	}
+	env = append(env, proxyEnv(spec)...)
 	return env
+}
+
+// proxyEnv renders the HTTP(S)_PROXY contract for governed egress: package
+// managers and git tunnel through the gateway's CONNECT proxy, authenticated
+// with the session token (the token is already in the env as the API key, so
+// the proxy URL adds no new exposure). NO_PROXY keeps model-API traffic
+// going straight to the gateway instead of looping through the proxy.
+// Both cases are set: curl and friends only read the lowercase variants.
+func proxyEnv(spec Spec) []corev1.EnvVar {
+	if spec.EgressProxyURL == "" {
+		return nil
+	}
+	u, err := url.Parse(spec.EgressProxyURL)
+	if err != nil || u.Host == "" {
+		return nil
+	}
+	u.User = url.UserPassword("paddock", spec.SessionToken)
+	proxy := u.String()
+
+	noProxy := []string{"localhost", "127.0.0.1"}
+	for _, raw := range []string{spec.GatewayURL, spec.OpenAIURL} {
+		if h := urlHostname(raw); h != "" && !slices.Contains(noProxy, h) {
+			noProxy = append(noProxy, h)
+		}
+	}
+	np := strings.Join(noProxy, ",")
+
+	return []corev1.EnvVar{
+		{Name: "HTTP_PROXY", Value: proxy},
+		{Name: "HTTPS_PROXY", Value: proxy},
+		{Name: "http_proxy", Value: proxy},
+		{Name: "https_proxy", Value: proxy},
+		{Name: "NO_PROXY", Value: np},
+		{Name: "no_proxy", Value: np},
+	}
+}
+
+func urlHostname(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+
+// gatewayPorts collects the TCP ports of every gateway-side URL the sandbox
+// legitimately talks to. They scope the netpol's gateway egress rule.
+func gatewayPorts(spec Spec) []netv1.NetworkPolicyPort {
+	tcp := corev1.ProtocolTCP
+	var out []netv1.NetworkPolicyPort
+	seen := map[int32]bool{}
+	for _, raw := range []string{spec.GatewayURL, spec.OpenAIURL, spec.EgressProxyURL} {
+		p, ok := urlPort(raw)
+		if !ok || seen[p] {
+			continue
+		}
+		seen[p] = true
+		port := intstr.FromInt32(p)
+		out = append(out, netv1.NetworkPolicyPort{Protocol: &tcp, Port: &port})
+	}
+	return out
+}
+
+func urlPort(raw string) (int32, bool) {
+	if raw == "" {
+		return 0, false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return 0, false
+	}
+	if p := u.Port(); p != "" {
+		var n int
+		if _, err := fmt.Sscanf(p, "%d", &n); err != nil || n <= 0 || n > 65535 {
+			return 0, false
+		}
+		return int32(n), true
+	}
+	switch u.Scheme {
+	case "https":
+		return 443, true
+	default:
+		return 80, true
+	}
 }
 
 // NamespaceName returns the per-session namespace.
@@ -98,6 +196,10 @@ func Render(spec Spec) (Resources, error) {
 	if spec.MemLimit == "" {
 		spec.MemLimit = "4Gi"
 	}
+	if spec.WorkspaceSizeLimit == "" {
+		spec.WorkspaceSizeLimit = "2Gi"
+	}
+	workspaceLimit := resource.MustParse(spec.WorkspaceSizeLimit)
 	ns := NamespaceName(spec.SessionID)
 	labels := map[string]string{
 		labelSession:   spec.SessionID,
@@ -110,6 +212,7 @@ func Render(spec Spec) (Resources, error) {
 		ObjectMeta: metav1.ObjectMeta{Name: ns, Labels: labels},
 	}
 
+	fsGroup := int64(10001)
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent", Namespace: ns, Labels: labels},
 		Spec: corev1.PodSpec{
@@ -117,6 +220,15 @@ func Render(spec Spec) (Resources, error) {
 			AutomountServiceAccountToken: &falseVal,
 			RestartPolicy:                corev1.RestartPolicyNever,
 			EnableServiceLinks:           &falseVal,
+			// fsGroup makes the workspace emptyDir writable for the
+			// non-root agent uid (emptyDir mounts root:root otherwise).
+			SecurityContext: &corev1.PodSecurityContext{FSGroup: &fsGroup},
+			Volumes: []corev1.Volume{{
+				Name: "workspace",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &workspaceLimit},
+				},
+			}},
 			Containers: []corev1.Container{{
 				Name:  "agent",
 				Image: spec.AgentImage,
@@ -126,6 +238,10 @@ func Render(spec Spec) (Resources, error) {
 				Stdin:      true,
 				TTY:        true,
 				WorkingDir: "/workspace",
+				VolumeMounts: []corev1.VolumeMount{{
+					Name:      "workspace",
+					MountPath: "/workspace",
+				}},
 				Env: agentEnv(spec),
 				Resources: corev1.ResourceRequirements{
 					Limits: corev1.ResourceList{
@@ -153,13 +269,17 @@ func Render(spec Spec) (Resources, error) {
 			// No ingress rules: nothing may connect in.
 			Egress: []netv1.NetworkPolicyEgressRule{
 				{
-					// Only the Paddock gateway.
+					// Only the Paddock gateway, and only its gateway ports:
+					// the server shares the gateway pod (and its label), so
+					// without the port list sandboxes could reach the
+					// control-plane API.
 					To: []netv1.NetworkPolicyPeer{{
 						NamespaceSelector: &metav1.LabelSelector{},
 						PodSelector: &metav1.LabelSelector{
 							MatchLabels: map[string]string{gatewayComponentLabel: gatewayComponentValue},
 						},
 					}},
+					Ports: gatewayPorts(spec),
 				},
 				{
 					// DNS.
