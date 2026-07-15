@@ -56,13 +56,12 @@ make build
 ./bin/paddock rm <id>                 # tear the sandbox down
 ```
 
-The CLI talks to the server at `PADDOCK_SERVER` (the production path: platform
-teams expose the server behind an ingress, e.g. `https://paddock.internal`, and
-hand developers that one env var), falling back to `localhost:8080`. On a dev
-cluster, `PADDOCK_PORT_FORWARD=1` lets it tunnel over your kubeconfig instead
-(`PADDOCK_KUBECONFIG` to override, `PADDOCK_NAMESPACE` to narrow the search).
-Inside the sandbox, Claude Code can only reach the Paddock gateway: no
-internet, no cluster API, no real keys.
+The CLI talks to the server at `PADDOCK_SERVER` — platform teams expose the
+server behind an ingress (e.g. `https://paddock.internal`) and hand developers
+that one env var — falling back to `localhost:8080`, where the k3d dev loop
+maps the cluster ingress. That's the whole story: no port-forwards, no
+kubeconfig magic. Inside the sandbox, Claude Code can only reach the Paddock
+gateway: no internet, no cluster API, no real keys.
 
 ### Any agent, any model server
 

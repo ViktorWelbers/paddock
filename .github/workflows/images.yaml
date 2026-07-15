@@ -26,26 +26,30 @@ jobs:
           - image: agent-pi
             dockerfile: Dockerfile.agent-pi
     container:
-      image: gcr.io/kaniko-project/executor:v1.23.2-debug
+      image: gcr.io/kaniko-project/executor:debug
+      options: --entrypoint ""
     env:
       # kaniko clones the build context itself (the executor image has no
       # node runtime, so actions/checkout can't run here)
-      GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GIT_USERNAME: x-access-token
+      GIT_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
       REGISTRY: ${{ vars.REGISTRY }}
     steps:
-      - name: Build and push ${{ matrix.image }}
-        shell: sh
+      - name: Registry auth
         run: |
           if [ -z "$REGISTRY" ]; then
             echo "::error::set the REGISTRY repository variable to your registry host"
             exit 1
           fi
-          tag=$(echo "$GITHUB_SHA" | cut -c1-7)
-          auth=$(printf '%s:%s' '${{ secrets.REGISTRY_USERNAME }}' '${{ secrets.REGISTRY_PASSWORD }}' | base64 | tr -d '\n')
           mkdir -p /kaniko/.docker
+          auth=$(printf '%s:%s' '${{ secrets.REGISTRY_USERNAME }}' '${{ secrets.REGISTRY_PASSWORD }}' | base64 | tr -d '\n')
           printf '{"auths":{"%s":{"auth":"%s"}}}' "$REGISTRY" "$auth" > /kaniko/.docker/config.json
+
+      - name: Build and push ${{ matrix.image }}
+        run: |
+          tag=$(echo '${{ github.sha }}' | cut -c1-7)
           /kaniko/executor \
-            --context "git://github.com/${GITHUB_REPOSITORY}#${GITHUB_SHA}" \
+            --context "git://github.com/${{ github.repository }}.git#${{ github.sha }}" \
             --dockerfile "${{ matrix.dockerfile }}" \
             --destination "$REGISTRY/paddock/${{ matrix.image }}:$tag" \
             --destination "$REGISTRY/paddock/${{ matrix.image }}:latest" \

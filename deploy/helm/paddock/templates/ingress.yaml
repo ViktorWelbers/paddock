@@ -12,11 +12,15 @@ spec:
   ingressClassName: {{ .Values.ingress.className }}
   {{- if .Values.ingress.tls.enabled }}
   tls:
-    - hosts: [{{ .Values.ingress.host | quote }}]
+    - hosts: [{{ required "ingress.host is required with ingress.tls" .Values.ingress.host | quote }}]
       secretName: {{ .Release.Name }}-ingress-tls
   {{- end }}
   rules:
-    - host: {{ .Values.ingress.host | quote }}
+    # No host = match-all: used by the k3d dev loop, where the ingress is
+    # reached as localhost through the mapped loadbalancer port.
+    - {{- with .Values.ingress.host }}
+      host: {{ . | quote }}
+      {{- end }}
       http:
         paths:
           - path: /

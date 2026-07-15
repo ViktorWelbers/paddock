@@ -59,8 +59,10 @@ push: docker-build
 # make dev-up   -> cluster + images + deploy (fake key unless ANTHROPIC_API_KEY set)
 # make e2e      -> end-to-end smoke test against the running deploy
 
+# Port 8080 maps to the cluster's ingress: the CLI finds the server on
+# localhost:8080 with no port-forward, same shape as production-behind-ingress.
 k3d-up:
-	@k3d cluster list $(K3D_CLUSTER) >/dev/null 2>&1 || k3d cluster create $(K3D_CLUSTER) --wait
+	@k3d cluster list $(K3D_CLUSTER) >/dev/null 2>&1 || k3d cluster create $(K3D_CLUSTER) -p "8080:80@loadbalancer" --wait
 
 k3d-down:
 	k3d cluster delete $(K3D_CLUSTER)
@@ -82,6 +84,8 @@ k3d-deploy:
 		--set image.repository=$(REGISTRY)/$(IMG) \
 		--set image.tag=$(TAG) \
 		--set agentImage=$(REGISTRY)/$(AGENT_IMG):$(TAG) \
+		--set ingress.enabled=true \
+		--set ingress.host="" \
 		$(if $(OPENAI_UPSTREAM),\
 			--set agentImagePi=$(REGISTRY)/$(AGENT_PI_IMG):$(TAG) \
 			--set gateway.openai.upstream=$(OPENAI_UPSTREAM) \
