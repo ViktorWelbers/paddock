@@ -9,6 +9,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -39,7 +40,7 @@ func attachSession(sessionID string, command []string) error {
 	}
 
 	ns := sandbox.NamespaceName(sessionID)
-	if err := waitPodRunning(client, ns); err != nil {
+	if err := waitPodRunning(client, ns, cfg.Host); err != nil {
 		return err
 	}
 
@@ -95,11 +96,17 @@ func kubeConfig() (*rest.Config, error) {
 	return cfg, nil
 }
 
-func waitPodRunning(client kubernetes.Interface, namespace string) error {
+func waitPodRunning(client kubernetes.Interface, namespace, host string) error {
 	deadline := time.Now().Add(2 * time.Minute)
 	notified := false
 	for {
 		pod, err := client.CoreV1().Pods(namespace).Get(context.Background(), "agent", metav1.GetOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			// NotFound just means the pod isn't created yet — keep waiting.
+			// Anything else (unreachable API server, auth) won't heal on its
+			// own; a stale kubectl context must not look like a slow pod.
+			return fmt.Errorf("cannot reach the cluster at %s: %w\nattach talks to the Kubernetes API directly (until the server-side relay lands): point your current kubectl context or PADDOCK_KUBECONFIG at the cluster running paddock", host, err)
+		}
 		if err == nil {
 			switch pod.Status.Phase {
 			case corev1.PodRunning:
