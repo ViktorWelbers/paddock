@@ -38,7 +38,9 @@ func main() {
 	seedBudgetUSD := flag.Float64("seed-budget-usd", 25, "create a 'default' budget with this limit if none exists (dev convenience, 0 disables)")
 	flag.Parse()
 
-	db, err := sql.Open("sqlite", *dbPath)
+	// WAL + busy_timeout: the gateway writes from another process sharing
+	// this file; without these, concurrent writers surface as SQLITE_BUSY.
+	db, err := sql.Open("sqlite", *dbPath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		log.Fatalf("open db: %v", err)
 	}

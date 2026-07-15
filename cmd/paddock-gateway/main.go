@@ -43,7 +43,10 @@ func main() {
 		log.Fatal("ANTHROPIC_API_KEY must be set on the gateway (sandboxes never see it)")
 	}
 
-	db, err := sql.Open("sqlite", *dbPath)
+	// WAL + busy_timeout: the server writes from another process, and the
+	// egress proxy appends audit rows from many goroutines — without these,
+	// concurrent writers surface as SQLITE_BUSY and dropped audit events.
+	db, err := sql.Open("sqlite", *dbPath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		log.Fatalf("open db: %v", err)
 	}
