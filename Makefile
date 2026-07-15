@@ -61,8 +61,14 @@ push: docker-build
 
 # Port 8080 maps to the cluster's ingress: the CLI finds the server on
 # localhost:8080 with no port-forward, same shape as production-behind-ingress.
+#
+# The dev loop never touches the user's current kubectl context: cluster
+# creation doesn't switch it, and every target below pins KUBECONFIG to the
+# k3d cluster's own file.
+K3D_ENV = KUBECONFIG=$$(k3d kubeconfig write $(K3D_CLUSTER))
+
 k3d-up:
-	@k3d cluster list $(K3D_CLUSTER) >/dev/null 2>&1 || k3d cluster create $(K3D_CLUSTER) -p "8080:80@loadbalancer" --wait
+	@k3d cluster list $(K3D_CLUSTER) >/dev/null 2>&1 || k3d cluster create $(K3D_CLUSTER) -p "8080:80@loadbalancer" --kubeconfig-switch-context=false --wait
 
 k3d-down:
 	k3d cluster delete $(K3D_CLUSTER)
@@ -71,16 +77,16 @@ k3d-import: docker-build
 	k3d image import -c $(K3D_CLUSTER) $(REGISTRY)/$(IMG):$(TAG) $(REGISTRY)/$(AGENT_IMG):$(TAG) $(REGISTRY)/$(AGENT_PI_IMG):$(TAG)
 
 k3d-deploy:
-	kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
-	kubectl -n $(NAMESPACE) create secret generic paddock-anthropic \
+	$(K3D_ENV) sh -c 'kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -'
+	$(K3D_ENV) sh -c 'kubectl -n $(NAMESPACE) create secret generic paddock-anthropic \
 		--from-literal=ANTHROPIC_API_KEY=$${ANTHROPIC_API_KEY:-sk-ant-fake} \
-		--dry-run=client -o yaml | kubectl apply -f -
+		--dry-run=client -o yaml | kubectl apply -f -'
 	@if [ -n "$(OPENAI_UPSTREAM)" ] && [ -f "$(OPENAI_CA)" ]; then \
-		kubectl -n $(NAMESPACE) create configmap openai-ca \
+		$(K3D_ENV) sh -c 'kubectl -n $(NAMESPACE) create configmap openai-ca \
 			--from-file=ca.crt=$(OPENAI_CA) \
-			--dry-run=client -o yaml | kubectl apply -f -; \
+			--dry-run=client -o yaml | kubectl apply -f -'; \
 	fi
-	helm upgrade --install paddock deploy/helm/paddock -n $(NAMESPACE) \
+	$(K3D_ENV) helm upgrade --install paddock deploy/helm/paddock -n $(NAMESPACE) \
 		--set image.repository=$(REGISTRY)/$(IMG) \
 		--set image.tag=$(TAG) \
 		--set agentImage=$(REGISTRY)/$(AGENT_IMG):$(TAG) \
@@ -94,11 +100,11 @@ k3d-deploy:
 		--wait --timeout 3m
 
 dev-up: k3d-up k3d-import k3d-deploy
-	@echo "paddock is up: kubectl -n $(NAMESPACE) get pods"
+	@echo "paddock is up: kubectl --context k3d-$(K3D_CLUSTER) -n $(NAMESPACE) get pods"
 
 e2e:
-	NAMESPACE=$(NAMESPACE) ./scripts/e2e-smoke.sh
+	$(K3D_ENV) NAMESPACE=$(NAMESPACE) ./scripts/e2e-smoke.sh
 
 # End-to-end for the pi agent against the OpenAI-compatible upstream.
 e2e-pi:
-	NAMESPACE=$(NAMESPACE) OPENAI_MODEL=$(OPENAI_MODEL) ./scripts/e2e-pi.sh
+	$(K3D_ENV) NAMESPACE=$(NAMESPACE) OPENAI_MODEL=$(OPENAI_MODEL) ./scripts/e2e-pi.sh
