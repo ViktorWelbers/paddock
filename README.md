@@ -88,6 +88,24 @@ make e2e-pi                           # governed completion, metering, netpol �
 ./bin/paddock run pi                  # interactive pi session in a sandbox
 ```
 
+### Custom agent images
+
+The default agent images ship node, git, python3 (use `python3 -m venv .venv`
+— system site-packages are locked down), make, jq, and ripgrep. For other
+toolchains, extend the image and point paddock at it — everything else stays
+the same:
+
+```dockerfile
+FROM <your-registry>/paddock/agent-claude:latest
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends golang && rm -rf /var/lib/apt/lists/*
+USER 10001:10001
+# keep the inherited tini entrypoint — it holds the sandbox pod
+```
+
+Wire it up via the `agentImage` helm value (or per-agent with the server's
+`--agent-images claude=myreg/agent-go:v1` flag).
+
 ## Dashboard
 
 The server ships a read-only dashboard at its root URL (`/`): budgets with
