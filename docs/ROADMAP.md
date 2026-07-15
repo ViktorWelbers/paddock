@@ -36,24 +36,19 @@
 - [ ] Hierarchical budgets exposed in config (org/team/user)
 - [ ] Policy decision input schema pinned + documented; `opa test` examples
 - [ ] Docs site, quickstart that works on kind/k3d in <10 min
-- [ ] Launch: HN post + deep-dive blog ("your coding agent should never see an API key")
 
-## M3 — First design partner
+## M3 — Production hardening
 
-- [ ] 3–5 discovery calls with EU fintech/bank platform leads
-- [ ] DORA/AI-Act control matrix drafted with a real compliance officer
-- [ ] First report pack prototype (evidence export over the audit store)
+- [ ] Evidence export over the audit store (DORA / EU AI Act report packs)
 - [ ] Postgres backend option
 
-## M4 — Enterprise tier / revenue
+## M4 — Enterprise tier
 
 - [ ] SSO/SAML, RBAC
 - [ ] Signed (hash-chained) audit log, SIEM export
 - [ ] Report packs productized
-- [ ] License + pricing page; first paid deployment
 
-## M5 — Data moat
+## M5 — MCP registry & hardening
 
 - [ ] MCP scanner pipeline (static + behavioral) feeding a vetted-registry dataset
-- [ ] Registry feed as enterprise subscription
 - [ ] gVisor runtimeClass option
