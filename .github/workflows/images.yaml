@@ -1,0 +1,52 @@
+# Builds the three paddock images and pushes them to the deployment
+# registry. Runs on the self-hosted `paddock-runners` scale set (in-cluster,
+# ARC kubernetes mode — hence kaniko, not docker). Push-to-main only: never
+# run fork-controlled code on self-hosted runners.
+#
+# Required repo secrets: REGISTRY_USERNAME, REGISTRY_PASSWORD
+# Required repo variable: REGISTRY (the registry host — deployment-specific,
+# deliberately not committed here)
+name: images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-push:
+    runs-on: paddock-runners
+    strategy:
+      matrix:
+        include:
+          - image: paddock
+            dockerfile: Dockerfile
+          - image: agent-claude
+            dockerfile: Dockerfile.agent
+          - image: agent-pi
+            dockerfile: Dockerfile.agent-pi
+    container:
+      image: gcr.io/kaniko-project/executor:v1.23.2-debug
+    env:
+      # kaniko clones the build context itself (the executor image has no
+      # node runtime, so actions/checkout can't run here)
+      GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REGISTRY: ${{ vars.REGISTRY }}
+    steps:
+      - name: Build and push ${{ matrix.image }}
+        shell: sh
+        run: |
+          if [ -z "$REGISTRY" ]; then
+            echo "::error::set the REGISTRY repository variable to your registry host"
+            exit 1
+          fi
+          tag=$(echo "$GITHUB_SHA" | cut -c1-7)
+          auth=$(printf '%s:%s' '${{ secrets.REGISTRY_USERNAME }}' '${{ secrets.REGISTRY_PASSWORD }}' | base64 | tr -d '\n')
+          mkdir -p /kaniko/.docker
+          printf '{"auths":{"%s":{"auth":"%s"}}}' "$REGISTRY" "$auth" > /kaniko/.docker/config.json
+          /kaniko/executor \
+            --context "git://github.com/${GITHUB_REPOSITORY}#${GITHUB_SHA}" \
+            --dockerfile "${{ matrix.dockerfile }}" \
+            --destination "$REGISTRY/paddock/${{ matrix.image }}:$tag" \
+            --destination "$REGISTRY/paddock/${{ matrix.image }}:latest" \
+            --skip-tls-verify
