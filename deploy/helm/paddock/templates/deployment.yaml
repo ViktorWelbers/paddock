@@ -46,7 +46,7 @@ spec:
         fsGroup: 65532
       containers:
         - name: server
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | toString }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/paddock-server"]
           args:
@@ -87,7 +87,7 @@ spec:
             - name: data
               mountPath: /data
         - name: gateway
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | toString }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/paddock-gateway"]
           args:
