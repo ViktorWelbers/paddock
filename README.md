@@ -187,6 +187,13 @@ Policies fail closed: if the engine errors the connection is denied and audited
 as `policy_error`. Because the decision is per-connection and carries the user,
 "who may reach what" is a Rego question, not a redeploy.
 
+Test your rules the way you already test Gatekeeper policies — `make policy-test`
+runs `opa test` over `policies/` (no need to install opa; the Makefile runs the
+pinned version through `go run`). Worth doing: a Rego rule that references a
+field the input doesn't carry is simply *undefined*, so it never fires, denies
+nothing, and reads perfectly well in review. `policies/egress_test.rego` has
+that exact case as a regression test.
+
 ### Any agent, any model server
 
 Paddock is agent-neutral. The gateway also fronts OpenAI-compatible upstreams

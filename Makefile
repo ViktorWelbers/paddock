@@ -19,7 +19,7 @@ OPENAI_MODEL    ?=
 OPENAI_CA       ?=
 
 .PHONY: build test vet lint clean helm-lint docker-build \
-        k3d-up k3d-down k3d-import k3d-deploy dev-up e2e e2e-egress e2e-pi push
+        policy-test k3d-up k3d-down k3d-import k3d-deploy dev-up e2e e2e-egress e2e-pi push
 
 build:
 	@mkdir -p $(BIN_DIR)
@@ -30,6 +30,14 @@ build:
 
 test:
 	go test ./...
+
+# Rego's own test runner, pinned to the OPA version the gateway evaluates
+# with. `go run <pkg>@<version>` ignores this module, so the CLI's
+# dependencies stay out of our go.mod and nobody has to install opa.
+OPA ?= go run github.com/open-policy-agent/opa@v1.18.2
+
+policy-test:
+	$(OPA) test policies/ -v
 
 vet:
 	go vet ./...

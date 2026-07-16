@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/user"
+	"runtime/debug"
 	"text/tabwriter"
 	"time"
 
@@ -25,10 +26,23 @@ func currentUser() string {
 	return "unknown"
 }
 
+// version reports the module version the binary was built from. `go install
+// ...@v0.2.0` stamps this into the build info, so released binaries know what
+// they are without any ldflags ceremony; a local `go build` says "dev".
+func version() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if v := info.Main.Version; v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	return "dev"
+}
+
 func main() {
 	cmd := &cli.Command{
-		Name:  "paddock",
-		Usage: "run coding agents in governed sandboxes",
+		Name:    "paddock",
+		Usage:   "run coding agents in governed sandboxes",
+		Version: version(),
 		Description: "Every session is a locked-down pod: model calls are metered against a\n" +
 			"budget, internet access is limited to an allowlist, and the whole lot is\n" +
 			"audited. `paddock config set server <url>` once, then `paddock run` from\n" +

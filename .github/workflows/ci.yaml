@@ -16,6 +16,9 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
+      # The shipped Rego, tested with Rego. A rule that matches nothing looks
+      # exactly like a rule that works, so this is not optional.
+      - run: make policy-test
 
   helm:
     runs-on: ubuntu-latest
