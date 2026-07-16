@@ -23,6 +23,15 @@
 - [x] Second supported agent proves agent-neutrality: pi against an OpenAI-compatible
       upstream (vLLM) through the gateway's `/openai` metering proxy (`make e2e-pi`,
       verified live: completion relayed, usage metered, budget debited, netpol enforced)
+- [x] The sandbox is usable for real work: the developer's working directory is
+      uploaded on `paddock run` (git-aware) and `paddock pull` brings the agent's
+      edits back, over the server rather than the CLI's kubeconfig; agent images
+      carry the expected toolchain (git, node, python3, make, jq)
+- [x] Governed egress: a CONNECT proxy on the gateway tunnels TLS end-to-end to
+      allowlisted domain groups, decided by allowlist + OPA, defended against DNS
+      rebinding, and audited allow/deny/close with byte counts (`make e2e-egress`,
+      verified live: `pip install` and github clone through the proxy, gitlab and an
+      exfiltration attempt refused and audited)
 - [ ] OpenCode as third agent
 
 ## M2 — Launchable OSS
@@ -33,8 +42,16 @@
       orphans session pods (observed live); reconcile pods labelled
       `paddock.dev/session` against the session store on startup
 - [ ] Server-side attach relay (websocket) so developers don't need pods/exec RBAC
+      (workspace transfer already goes through the server; attach is the last thing
+      holding client-go — and 36MB — in the CLI)
+- [ ] Idle-TTL reaper for detached sessions: today a forgotten session holds its
+      pod's CPU/memory until someone runs `paddock rm`
+- [ ] Concurrent-session ceiling: the per-session ResourceQuota went away with the
+      per-session namespace, so "how many sandboxes may this cluster run" is now a
+      server-side check nobody has written
 - [ ] Hierarchical budgets exposed in config (org/team/user)
-- [ ] Policy decision input schema pinned + documented; `opa test` examples
+- [x] Policy decision input schema pinned + documented (`docs/ARCHITECTURE.md`)
+- [ ] `opa test` examples for the shipped policies
 - [ ] Docs site, quickstart that works on kind/k3d in <10 min
 
 ## M3 — Production hardening

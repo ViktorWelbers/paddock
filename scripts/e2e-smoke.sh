@@ -92,9 +92,48 @@ else
   echo "ok (spent_usd=$SPENT)"
 fi
 
+step "workspace round-trip: push a project in, pull the agent's edits back"
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' RETURN 2>/dev/null || true
+mkdir -p "$WORK/src/src"
+cd "$WORK/src"
+git init -q
+printf 'ignored/\n' > .gitignore
+printf 'def greet():\n    return "hello"\n' > src/greet.py
+mkdir -p ignored && echo "must not travel" > ignored/junk.txt
+git add -A
+git -c user.email=e2e@paddock -c user.name=e2e commit -qm "initial"
+cd - >/dev/null
+
+# tar the same way the CLI does (git decides what travels), so the server
+# side is exercised exactly as a developer would drive it.
+tar -czf "$WORK/ws.tgz" -C "$WORK/src" .gitignore src .git
+curl -sf -X POST "$SERVER/v1/sessions/$SID/workspace" \
+  -H 'content-type: application/gzip' --data-binary "@$WORK/ws.tgz" -o /dev/null \
+  || fail "workspace push rejected"
+
+kubectl -n "$NS" exec "$POD" -- test -f /workspace/src/greet.py \
+  || fail "pushed file missing from the sandbox"
+# The toolchain the developer expects must actually be there.
+kubectl -n "$NS" exec "$POD" -- python3 -c 'import sys; sys.path.insert(0,"/workspace/src"); from greet import greet; print(greet())' \
+  | grep -q hello || fail "python3 cannot run the pushed project"
+kubectl -n "$NS" exec "$POD" -- git -C /workspace log --oneline | grep -q initial \
+  || fail "git history did not survive the push (dubious-ownership regression?)"
+
+# The agent edits the project; the developer pulls it home.
+kubectl -n "$NS" exec "$POD" -- sh -c 'printf "def greet():\n    return \"edited-by-agent\"\n" > /workspace/src/greet.py'
+mkdir -p "$WORK/out"
+curl -sf "$SERVER/v1/sessions/$SID/workspace" -o "$WORK/out.tgz" || fail "workspace pull rejected"
+tar -xzf "$WORK/out.tgz" -C "$WORK/out"
+grep -q edited-by-agent "$WORK/out/src/greet.py" || fail "the agent's edit did not come back"
+[ ! -e "$WORK/out/ignored/junk.txt" ] || fail "gitignored files must not travel"
+echo "ok"
+
 step "audit trail"
-curl -sf "$SERVER/v1/sessions/$SID/events" | grep -q 'session.created' \
-  || fail "no session.created audit event"
+EVENTS=$(curl -sf "$SERVER/v1/sessions/$SID/events")
+echo "$EVENTS" | grep -q 'session.created' || fail "no session.created audit event"
+echo "$EVENTS" | grep -q 'workspace.push' || fail "workspace push was not audited"
+echo "$EVENTS" | grep -q 'workspace.pull' || fail "workspace pull was not audited"
 echo "ok"
 
 step "delete session"

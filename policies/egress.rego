@@ -10,11 +10,18 @@ package paddock.authz
 
 import rego.v1
 
+# The proxy already refuses a host no group claims before it ever asks a
+# policy, so this is the second line of defense. It has to test for the
+# *absence* of groups rather than count(input.groups) == 0: `groups` is
+# omitted from the input document entirely when empty, which would leave the
+# count undefined and this rule quietly dead.
 deny contains msg if {
 	input.kind == "egress"
-	count(input.groups) == 0
+	not has_groups
 	msg := sprintf("host %q matches no allowed egress group", [input.host])
 }
+
+has_groups if count(input.groups) > 0
 
 deny contains msg if {
 	input.kind == "egress"

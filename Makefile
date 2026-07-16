@@ -19,7 +19,7 @@ OPENAI_MODEL    ?=
 OPENAI_CA       ?=
 
 .PHONY: build test vet lint clean helm-lint docker-build \
-        k3d-up k3d-down k3d-import k3d-deploy dev-up e2e e2e-pi push
+        k3d-up k3d-down k3d-import k3d-deploy dev-up e2e e2e-egress e2e-pi push
 
 build:
 	@mkdir -p $(BIN_DIR)
@@ -109,6 +109,11 @@ dev-up: k3d-up k3d-import k3d-deploy
 
 e2e:
 	$(K3D_ENV) NAMESPACE=$(NAMESPACE) ./scripts/e2e-smoke.sh
+
+# Governed egress: allowlisted registries reachable, everything else refused,
+# all of it audited. Needs real internet access from the cluster.
+e2e-egress:
+	$(K3D_ENV) NAMESPACE=$(NAMESPACE) ./scripts/e2e-egress.sh
 
 # End-to-end for the pi agent against the OpenAI-compatible upstream.
 e2e-pi:
