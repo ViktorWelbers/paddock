@@ -9,6 +9,8 @@ Paddock spawns per-user sandboxes for agents like Claude Code and OpenCode on *y
 
 Paddock is **not** a meta-harness or an agent framework. It doesn't orchestrate agents, compose them, or replace your agent of choice. It answers one question for the enterprise: *"Our developers want to run autonomous coding agents — how do we let them without losing control of cost, credentials, and compliance?"*
 
+ ![Gif](docs/img/paddock-selfhosted.gif)
+
 ## Why
 
 Coding agents are being adopted faster than platform teams can govern them. Today the typical setup is: an API key in an engineer's shell profile, unbounded spend, tools with unrestricted network and credential access, and no audit trail. That is a non-starter for banks, insurers, and anyone under DORA or the EU AI Act.
@@ -112,8 +114,6 @@ The server ships a read-only dashboard at its root URL (`/`): budgets with
 spend meters, sessions, and each session's audit trail. It's a single embedded
 HTML file — no extra deployment, no JS toolchain, works wherever the API is
 reachable.
-
-![Paddock dashboard](docs/img/dashboard.png)
 
 ## Deploying to your own cluster
 
