@@ -36,7 +36,10 @@ func allowAll(context.Context, policy.Input) (policy.Decision, error) {
 
 func newAudit(t *testing.T) *audit.Store {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "a.db"))
+	// Same DSN the server and gateway use: the proxy appends audit rows from
+	// its tunnel goroutines while the test reads them back, and without WAL
+	// and a busy timeout that contention is SQLITE_BUSY rather than a wait.
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "a.db")+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,6 +89,12 @@ func clientVia(proxyBase, token string) *http.Client {
 	return &http.Client{Transport: &http.Transport{
 		Proxy:           http.ProxyURL(u),
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		// The proxy only writes egress.closed once both halves of the tunnel
+		// finish, so tests need the connection to actually end when the
+		// response does. With keep-alives on, the transport parks the
+		// connection in its idle pool *asynchronously* after EOF, which makes
+		// closing it from the test a race rather than an instruction.
+		DisableKeepAlives: true,
 	}}
 }
 
@@ -127,7 +136,6 @@ func TestConnectTunnelAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tunneled request failed: %v", err)
 	}
-	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != "hello from upstream" {
 		t.Errorf("body = %q", body)
@@ -137,8 +145,11 @@ func TestConnectTunnelAllowed(t *testing.T) {
 		t.Errorf("missing egress.allowed event, got %v", k)
 	}
 
-	// egress.closed is only written once both halves of the tunnel finish, so
-	// the keep-alive connection has to go first.
+	// Ending the tunnel is what produces egress.closed. Closing the body is
+	// the deterministic trigger (keep-alives are off, so this closes the
+	// connection); the audit row is still appended by the proxy's own
+	// goroutine, hence the poll.
+	resp.Body.Close()
 	client.CloseIdleConnections()
 	waitForKind(t, aud, "s1", audit.KindEgressClosed)
 
