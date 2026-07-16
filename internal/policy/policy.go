@@ -15,12 +15,16 @@ import (
 
 // Input is the stable decision document passed to Rego as `input`.
 type Input struct {
-	Kind    string         `json:"kind"` // "tool_call" | "mcp_call"
+	Kind    string         `json:"kind"` // "tool_call" | "mcp_call" | "egress"
 	User    string         `json:"user"`
 	Session string         `json:"session"`
+	Agent   string         `json:"agent,omitempty"`
 	Tool    string         `json:"tool,omitempty"`   // tool_call
 	Server  string         `json:"server,omitempty"` // mcp_call
 	Args    map[string]any `json:"args,omitempty"`
+	Host    string         `json:"host,omitempty"`   // egress: CONNECT target host
+	Port    int            `json:"port,omitempty"`   // egress: CONNECT target port
+	Groups  []string       `json:"groups,omitempty"` // egress: allowlist groups the host matched
 }
 
 type Decision struct {

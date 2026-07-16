@@ -1,0 +1,16 @@
+{{- if .Values.gateway.egress.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-egress
+data:
+  # Rendered as JSON so the shape matches egress.Allowlist exactly; an empty
+  # groups map is a valid (deny-all) configuration.
+  allowlist.json: |
+    {{ dict
+         "groups" (default dict .Values.gateway.egress.allowlist.groups)
+         "allowed_ports" .Values.gateway.egress.allowedPorts
+         "plain_http" .Values.gateway.egress.plainHTTP
+         "allowed_private_cidrs" (default list .Values.gateway.egress.allowedPrivateCIDRs)
+       | toJson }}
+{{- end }}

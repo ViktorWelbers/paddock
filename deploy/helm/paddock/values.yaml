@@ -13,6 +13,9 @@ server:
   port: 8080
   # Dev convenience: seed a 'default' budget with this USD limit (0 disables).
   seedBudgetUSD: 25
+  # Size cap of the sandbox /workspace emptyDir (the developer's uploaded files
+  # plus whatever the agent installs into it).
+  workspaceSizeLimit: 2Gi
   resources: {}
 
 gateway:
@@ -34,6 +37,44 @@ gateway:
     # private CA (e.g. cert-manager's ca-issuer).
     caConfigMap: ""
   resources: {}
+  # Governed internet door for sandboxes: an HTTP CONNECT proxy that tunnels
+  # TLS end-to-end (no interception) and only to allowlisted domains. Every
+  # allow, deny, and connection close is audited. Default-deny: with an empty
+  # allowlist the proxy runs and refuses everything.
+  egress:
+    enabled: true
+    port: 8082
+    # CONNECT target ports the proxy will dial.
+    allowedPorts: [443]
+    # Permit plain (non-CONNECT) http:// proxying. Off by default — every
+    # registry worth reaching is https, and plaintext is exfil-friendly.
+    plainHTTP: false
+    # Private ranges (RFC1918/CGNAT/ULA) a resolved host may land in. Empty
+    # keeps them all blocked, which is what stops a rebound DNS name from
+    # reaching the kube API, the metadata service, or another namespace.
+    # In-cluster model upstreams go through the gateway's /openai path, not
+    # this proxy, so operators normally leave this empty.
+    allowedPrivateCIDRs: []
+    # Domain groups a sandbox may reach. Group names are what the OPA policy
+    # (policies/egress.rego) and the audit trail see. A pattern is an exact
+    # host or "*.example.com" (sub-domains only, never the apex).
+    allowlist:
+      groups: {}
+      # groups:
+      #   package_registries:
+      #     - registry.npmjs.org
+      #     - pypi.org
+      #     - files.pythonhosted.org
+      #     - proxy.golang.org
+      #     - sum.golang.org
+      #     - crates.io
+      #     - static.crates.io
+      #     - index.crates.io
+      #   github:
+      #     - github.com
+      #     - "*.github.com"
+      #     - codeload.github.com
+      #     - objects.githubusercontent.com
   # Server-side MCP allowlist. Empty = MCP disabled. Each entry becomes part
   # of /mcp/registry.json; credential_env names a key in credentialsSecret.
   mcpRegistry:

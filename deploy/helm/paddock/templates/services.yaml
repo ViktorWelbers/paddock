@@ -30,3 +30,8 @@ spec:
     - name: http
       port: {{ .Values.gateway.port }}
       targetPort: {{ .Values.gateway.port }}
+    {{- if .Values.gateway.egress.enabled }}
+    - name: egress
+      port: {{ .Values.gateway.egress.port }}
+      targetPort: {{ .Values.gateway.egress.port }}
+    {{- end }}

@@ -19,6 +19,11 @@ const (
 	KindBudgetExhausted = "budget.exhausted"
 	KindMCPCall         = "mcp.call"
 	KindPolicyDenied    = "policy.denied"
+	KindEgressAllowed   = "egress.allowed"
+	KindEgressDenied    = "egress.denied"
+	KindEgressClosed    = "egress.closed"
+	KindWorkspacePush   = "workspace.push"
+	KindWorkspacePull   = "workspace.pull"
 )
 
 type Event struct {

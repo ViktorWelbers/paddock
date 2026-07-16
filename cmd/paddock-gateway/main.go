@@ -23,6 +23,7 @@ import (
 	"github.com/viktorwelbers/paddock/internal/api"
 	"github.com/viktorwelbers/paddock/internal/audit"
 	"github.com/viktorwelbers/paddock/internal/budget"
+	"github.com/viktorwelbers/paddock/internal/egress"
 	"github.com/viktorwelbers/paddock/internal/gateway"
 	"github.com/viktorwelbers/paddock/internal/mcpgw"
 	"github.com/viktorwelbers/paddock/internal/policy"
@@ -36,6 +37,8 @@ func main() {
 	upstreamOpenAICA := flag.String("upstream-openai-ca", "", "PEM file with an extra CA to trust for the OpenAI upstream (private CAs)")
 	policiesDir := flag.String("policies", "policies", "directory of .rego policies")
 	mcpRegistry := flag.String("mcp-registry", "", "JSON file of allowlisted MCP servers (empty = MCP disabled)")
+	egressAddr := flag.String("egress-addr", "", "listen address for the governed egress CONNECT proxy (empty = disabled)")
+	egressAllowlist := flag.String("egress-allowlist", "", "JSON file of allowed egress domain groups (missing/empty = deny all, still audited)")
 	flag.Parse()
 
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
@@ -132,12 +135,47 @@ func main() {
 		}
 	}()
 
+	var egressSrv *http.Server
+	if *egressAddr != "" {
+		allowlist, err := egress.Load(*egressAllowlist)
+		if err != nil {
+			log.Fatalf("load egress allowlist: %v", err)
+		}
+		proxy := &egress.Proxy{
+			Auth: func(token string) (egress.Session, error) {
+				sess, err := sessions.ByToken(token)
+				if err != nil {
+					return egress.Session{}, err
+				}
+				return egress.Session{ID: sess.ID, User: sess.User, Agent: sess.Agent}, nil
+			},
+			Policy:    engine.Evaluate,
+			Audit:     auditStore,
+			Allowlist: allowlist,
+		}
+		proxy.LogConfig(log.Default())
+		// No Read/Write timeouts: CONNECT tunnels are long-lived; the proxy
+		// enforces its own idle deadline instead.
+		egressSrv = &http.Server{Addr: *egressAddr, Handler: proxy, ReadHeaderTimeout: 10 * time.Second}
+		go func() {
+			log.Printf("egress proxy listening on %s", *egressAddr)
+			if err := egressSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Fatal(err)
+			}
+		}()
+	}
+
 	<-ctx.Done()
 	log.Print("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown: %v", err)
+	}
+	if egressSrv != nil {
+		if err := egressSrv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("egress shutdown: %v", err)
+		}
 	}
 	if err := db.Close(); err != nil {
 		log.Printf("close db: %v", err)

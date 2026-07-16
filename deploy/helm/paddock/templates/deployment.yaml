@@ -61,6 +61,10 @@ spec:
             {{- if .Values.gateway.openai.model }}
             - --openai-model={{ .Values.gateway.openai.model }}
             {{- end }}
+            {{- if .Values.gateway.egress.enabled }}
+            - --egress-proxy-url=http://{{ .Release.Name }}-gateway.{{ .Release.Namespace }}.svc:{{ .Values.gateway.egress.port }}
+            {{- end }}
+            - --workspace-size-limit={{ .Values.server.workspaceSizeLimit }}
             - --seed-budget-usd={{ .Values.server.seedBudgetUSD }}
           ports:
             - containerPort: {{ .Values.server.port }}
@@ -97,6 +101,10 @@ spec:
             {{- if .Values.gateway.mcpRegistry.servers }}
             - --mcp-registry=/mcp/registry.json
             {{- end }}
+            {{- if .Values.gateway.egress.enabled }}
+            - --egress-addr=:{{ .Values.gateway.egress.port }}
+            - --egress-allowlist=/egress/allowlist.json
+            {{- end }}
           env:
             - name: ANTHROPIC_API_KEY
               valueFrom:
@@ -119,6 +127,9 @@ spec:
           {{- end }}
           ports:
             - containerPort: {{ .Values.gateway.port }}
+            {{- if .Values.gateway.egress.enabled }}
+            - containerPort: {{ .Values.gateway.egress.port }}
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /healthz
@@ -137,6 +148,11 @@ spec:
             - name: policies
               mountPath: /policies
               readOnly: true
+            {{- if .Values.gateway.egress.enabled }}
+            - name: egress
+              mountPath: /egress
+              readOnly: true
+            {{- end }}
             {{- if .Values.gateway.mcpRegistry.servers }}
             - name: mcp-registry
               mountPath: /mcp
@@ -151,6 +167,11 @@ spec:
         - name: policies
           configMap:
             name: {{ .Release.Name }}-policies
+        {{- if .Values.gateway.egress.enabled }}
+        - name: egress
+          configMap:
+            name: {{ .Release.Name }}-egress
+        {{- end }}
         {{- if .Values.gateway.mcpRegistry.servers }}
         - name: mcp-registry
           configMap:
