@@ -92,12 +92,17 @@ k3d-deploy:
 		--set agentImage=$(REGISTRY)/$(AGENT_IMG):$(TAG) \
 		--set ingress.enabled=true \
 		--set ingress.host="" \
+		--set-json 'gateway.egress.allowlist.groups={"package_registries":["pypi.org","files.pythonhosted.org","registry.npmjs.org","proxy.golang.org","sum.golang.org"],"github":["github.com","*.github.com","codeload.github.com","objects.githubusercontent.com"]}' \
 		$(if $(OPENAI_UPSTREAM),\
 			--set agentImagePi=$(REGISTRY)/$(AGENT_PI_IMG):$(TAG) \
 			--set gateway.openai.upstream=$(OPENAI_UPSTREAM) \
 			--set gateway.openai.model=$(OPENAI_MODEL) \
 			$(if $(wildcard $(OPENAI_CA)),--set gateway.openai.caConfigMap=openai-ca,)) \
 		--wait --timeout 3m
+	# The :dev tag never changes, so an unchanged pod spec would keep the old
+	# image running after a rebuild. Force the roll.
+	$(K3D_ENV) sh -c 'kubectl -n $(NAMESPACE) rollout restart deploy/paddock && \
+		kubectl -n $(NAMESPACE) rollout status deploy/paddock --timeout=3m'
 
 dev-up: k3d-up k3d-import k3d-deploy
 	@echo "paddock is up: kubectl --context k3d-$(K3D_CLUSTER) -n $(NAMESPACE) get pods"

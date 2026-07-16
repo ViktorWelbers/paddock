@@ -148,7 +148,10 @@ type Handler struct {
 	Ledger      *budget.Ledger
 	Audit       *audit.Store
 	Provisioner sandbox.Provisioner
-	Config      Config
+	// Exec streams workspaces in and out of sandboxes. Nil (no cluster)
+	// makes the workspace endpoints report 501 rather than fail obscurely.
+	Exec   sandbox.Execer
+	Config Config
 }
 
 // dashboardHTML is the read-only web dashboard (sessions, budgets, audit
@@ -169,6 +172,8 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/sessions/{id}", h.getSession)
 	mux.HandleFunc("DELETE /v1/sessions/{id}", h.deleteSession)
 	mux.HandleFunc("GET /v1/sessions/{id}/events", h.sessionEvents)
+	mux.HandleFunc("POST /v1/sessions/{id}/workspace", h.pushWorkspace)
+	mux.HandleFunc("GET /v1/sessions/{id}/workspace", h.pullWorkspace)
 	mux.HandleFunc("GET /v1/budgets", h.listBudgets)
 	mux.HandleFunc("GET /v1/budgets/{id}", h.getBudget)
 	return mux

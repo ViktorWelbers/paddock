@@ -1,7 +1,12 @@
-# Sandbox agent image: Claude Code preinstalled. The sandbox NetworkPolicy
-# only allows egress to the paddock gateway, so everything the agent needs
-# must be baked in at build time (no runtime npm installs) and all
-# nonessential outbound traffic is disabled.
+# Sandbox agent image: Claude Code preinstalled, plus the toolchain a
+# developer expects to find (git, node, python3, make, jq).
+#
+# The sandbox NetworkPolicy only allows egress to the paddock gateway, so
+# the base toolchain is baked in here. Dependencies are a different matter:
+# agents reach allowlisted registries through the gateway's egress proxy
+# (HTTP_PROXY is injected into the sandbox), so `pip install` and friends
+# work at runtime when the operator allows the domain. Nonessential agent
+# telemetry stays off regardless.
 #
 # Contract with internal/sandbox: the entrypoint holds the pod alive;
 # `paddock attach` execs the agent with a TTY. Numeric USER because the
@@ -21,6 +26,13 @@ RUN groupadd -g 10001 agent \
  && useradd -m -u 10001 -g 10001 -d /home/agent agent \
  && mkdir -p /workspace \
  && chown 10001:10001 /workspace
+
+# /workspace is an emptyDir at runtime, and the kubelet creates its mount
+# root owned by root (fsGroup only sets the group). Git then refuses to
+# touch the developer's repo there -- "detected dubious ownership" -- even
+# though every file inside belongs to the agent. The workspace is the
+# agent's own by construction, so declare it trusted.
+RUN git config --system --add safe.directory /workspace
 
 ENV HOME=/home/agent \
     TERM=xterm-256color \

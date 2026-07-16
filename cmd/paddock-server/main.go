@@ -71,11 +71,16 @@ func main() {
 	}
 
 	ns := sandboxNamespace(*namespace)
+	provisioner := newProvisioner(*kubeconfig, ns)
+	// Only a real cluster can stream workspaces; the no-op provisioner leaves
+	// Exec nil and the workspace endpoints say so.
+	execer, _ := provisioner.(sandbox.Execer)
 	h := &api.Handler{
 		Sessions:    sessions,
 		Ledger:      ledger,
 		Audit:       auditStore,
-		Provisioner: newProvisioner(*kubeconfig, ns),
+		Provisioner: provisioner,
+		Exec:        execer,
 		Config: api.Config{
 			Namespace:      ns,
 			AgentImage:     *agentImage,
@@ -155,7 +160,7 @@ func newProvisioner(kubeconfig, namespace string) sandbox.Provisioner {
 		log.Fatalf("k8s client: %v", err)
 	}
 	log.Printf("sandboxes will run in namespace %q", namespace)
-	return &sandbox.K8s{Client: client, Namespace: namespace}
+	return &sandbox.K8s{Client: client, Namespace: namespace, RESTConfig: cfg}
 }
 
 // sandboxNamespace resolves where sandboxes run: the flag wins, otherwise the

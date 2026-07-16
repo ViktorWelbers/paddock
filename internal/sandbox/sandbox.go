@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 const (
@@ -327,6 +328,8 @@ func (Noop) Delete(context.Context, string) error { return nil }
 type K8s struct {
 	Client    kubernetes.Interface
 	Namespace string
+	// RESTConfig backs pods/exec (workspace transfer); nil disables it.
+	RESTConfig *rest.Config
 }
 
 func (k *K8s) Create(ctx context.Context, spec Spec) error {

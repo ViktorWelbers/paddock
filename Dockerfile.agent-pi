@@ -26,6 +26,13 @@ RUN groupadd -g 10001 agent \
  && mkdir -p /workspace \
  && chown 10001:10001 /workspace
 
+# /workspace is an emptyDir at runtime, and the kubelet creates its mount
+# root owned by root (fsGroup only sets the group). Git then refuses to
+# touch the developer's repo there -- "detected dubious ownership" -- even
+# though every file inside belongs to the agent. The workspace is the
+# agent's own by construction, so declare it trusted.
+RUN git config --system --add safe.directory /workspace
+
 # PI_OFFLINE: no update checks or other startup network calls — they can
 # only hang against the sandbox NetworkPolicy.
 ENV HOME=/home/agent \

@@ -1,7 +1,11 @@
 // paddock is the developer CLI. It talks to paddock-server over HTTP.
 //
-//	paddock run <agent>       spawn a governed session and attach (--detach to skip)
+//	paddock run <agent>       spawn a governed session, upload the current
+//	                          directory, and attach (--detach to skip the
+//	                          terminal, --no-push to skip the upload)
 //	paddock attach <id>       attach a terminal to a running session
+//	paddock push <id> [dir]   upload a directory into a session's /workspace
+//	paddock pull <id> [dir]   download a session's /workspace
 //	paddock ls                list sessions
 //	paddock rm <id>           tear a session down
 //	paddock budget [id]       show budget headroom
@@ -51,6 +55,10 @@ func main() {
 			}
 		}
 		err = attachSession(os.Args[2], command)
+	case "push":
+		err = workspaceCmd(os.Args[2:], "push")
+	case "pull":
+		err = workspaceCmd(os.Args[2:], "pull")
 	case "ls":
 		err = listSessions()
 	case "rm":
@@ -75,8 +83,35 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: paddock run <agent> [--detach] | attach <id> [cmd...] | ls | rm <id> | budget [id] | events <id> | config [set server <url>]")
+	fmt.Fprintln(os.Stderr, "usage: paddock run <agent> [--detach] [--no-push] | attach <id> [cmd...] | push <id> [dir] [--clean] | pull <id> [dir] | ls | rm <id> | budget [id] | events <id> | config [set server <url>]")
 	os.Exit(2)
+}
+
+// workspaceCmd parses `push <id> [dir] [--clean]` / `pull <id> [dir]`.
+func workspaceCmd(args []string, verb string) error {
+	clean := false
+	var positional []string
+	for _, a := range args {
+		if a == "--clean" {
+			clean = true
+			continue
+		}
+		positional = append(positional, a)
+	}
+	if len(positional) < 1 {
+		usage()
+	}
+	dir := "."
+	if len(positional) > 1 {
+		dir = positional[1]
+	}
+	if verb == "pull" {
+		if clean {
+			return fmt.Errorf("--clean applies to push, not pull")
+		}
+		return pullWorkspace(positional[0], dir)
+	}
+	return pushWorkspace(positional[0], dir, clean)
 }
 
 func withArg(args []string, fn func(string) error) error {
@@ -88,10 +123,15 @@ func withArg(args []string, fn func(string) error) error {
 
 func runSession(args []string) error {
 	detach := false
+	push := true
 	agent := ""
 	for _, a := range args {
 		if a == "--detach" || a == "-d" {
 			detach = true
+			continue
+		}
+		if a == "--no-push" {
+			push = false
 			continue
 		}
 		if agent == "" {
@@ -123,6 +163,17 @@ func runSession(args []string) error {
 		return err
 	}
 	fmt.Printf("session %s created\n", sess.ID)
+
+	// An agent staring at an empty directory is useless, so the working
+	// directory goes up by default. A failure here is not fatal: the session
+	// exists and is worth attaching to even with an empty workspace.
+	if push {
+		if err := pushWorkspace(sess.ID, ".", false); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not upload the workspace: %v\n", err)
+			fmt.Fprintf(os.Stderr, "the sandbox is empty; retry with: paddock push %s\n", sess.ID)
+		}
+	}
+
 	if detach {
 		fmt.Printf("sandbox is starting; attach with: paddock attach %s\n", sess.ID)
 		return nil

@@ -18,6 +18,13 @@ rules:
   - apiGroups: [""]
     resources: [pods]
     verbs: [create, delete, get, list]
+  # Streams the developer's workspace in and out of the sandbox (tar over
+  # exec), so the CLI needs no cluster access of its own. `get` as well as
+  # `create`: the websocket executor opens the stream with a GET, and only
+  # the SPDY fallback uses POST.
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create, get]
   - apiGroups: [networking.k8s.io]
     resources: [networkpolicies]
     verbs: [create, delete, get]
