@@ -6,7 +6,7 @@
 - [x] Session CRUD API against SQLite
 - [x] Budget ledger with price table, hard/soft caps (unit-tested)
 - [x] Gateway proxy with token metering against fake upstream (unit-tested)
-- [x] Sandbox spec rendering: pod + namespace + NetworkPolicy + quota (unit-tested)
+- [x] Sandbox spec rendering: pod + NetworkPolicy, in paddock's own namespace (unit-tested)
 - [x] OPA policy evaluation with example rego (unit-tested)
 - [x] Helm chart scaffold
 
@@ -30,8 +30,8 @@
 - [x] Web dashboard (sessions, spend, audit trail) — read-only, embedded in the server at `/`
 - [ ] Server API authentication (today: keep it cluster-internal or behind ingress auth)
 - [ ] Sandbox reconciliation/GC: a control-plane restart with ephemeral storage
-      orphans session namespaces (observed live); reconcile namespaces against the
-      session store on startup
+      orphans session pods (observed live); reconcile pods labelled
+      `paddock.dev/session` against the session store on startup
 - [ ] Server-side attach relay (websocket) so developers don't need pods/exec RBAC
 - [ ] Hierarchical budgets exposed in config (org/team/user)
 - [ ] Policy decision input schema pinned + documented; `opa test` examples

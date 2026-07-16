@@ -1,4 +1,8 @@
 bin/
+# `go build` with no -o drops the binary in the repo root.
+/paddock
+/paddock-server
+/paddock-gateway
 docs/internal/
 *.db
 *.sqlite

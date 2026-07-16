@@ -18,8 +18,6 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 
 	"golang.org/x/term"
-
-	"github.com/viktorwelbers/paddock/internal/sandbox"
 )
 
 // attachSession execs the agent command inside a session's sandbox pod with a
@@ -28,6 +26,13 @@ import (
 func attachSession(sessionID string, command []string) error {
 	if len(command) == 0 {
 		command = []string{"claude"}
+	}
+
+	// The server owns the cluster layout and reports where the pod landed;
+	// the CLI never derives namespaces or pod names itself.
+	loc, err := sessionLocation(sessionID)
+	if err != nil {
+		return err
 	}
 
 	cfg, err := kubeConfig()
@@ -39,13 +44,12 @@ func attachSession(sessionID string, command []string) error {
 		return err
 	}
 
-	ns := sandbox.NamespaceName(sessionID)
-	if err := waitPodRunning(client, ns, cfg.Host); err != nil {
+	if err := waitPodRunning(client, loc.Namespace, loc.Pod, cfg.Host); err != nil {
 		return err
 	}
 
 	req := client.CoreV1().RESTClient().Post().
-		Resource("pods").Namespace(ns).Name("agent").SubResource("exec").
+		Resource("pods").Namespace(loc.Namespace).Name(loc.Pod).SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
 			Container: "agent",
 			Command:   command,
@@ -96,11 +100,11 @@ func kubeConfig() (*rest.Config, error) {
 	return cfg, nil
 }
 
-func waitPodRunning(client kubernetes.Interface, namespace, host string) error {
+func waitPodRunning(client kubernetes.Interface, namespace, name, host string) error {
 	deadline := time.Now().Add(2 * time.Minute)
 	notified := false
 	for {
-		pod, err := client.CoreV1().Pods(namespace).Get(context.Background(), "agent", metav1.GetOptions{})
+		pod, err := client.CoreV1().Pods(namespace).Get(context.Background(), name, metav1.GetOptions{})
 		if err != nil && !apierrors.IsNotFound(err) {
 			// NotFound just means the pod isn't created yet — keep waiting.
 			// Anything else (unreachable API server, auth) won't heal on its

@@ -28,9 +28,9 @@ type PriceTable map[string]Price
 // models fall back to the most expensive known price so metering errs on the
 // side of overcounting, never undercounting.
 var DefaultPrices = PriceTable{
-	"claude-opus-4-8":            {InputPerMTok: 15, OutputPerMTok: 75},
-	"claude-sonnet-5":            {InputPerMTok: 3, OutputPerMTok: 15},
-	"claude-haiku-4-5-20251001":  {InputPerMTok: 1, OutputPerMTok: 5},
+	"claude-opus-4-8":           {InputPerMTok: 15, OutputPerMTok: 75},
+	"claude-sonnet-5":           {InputPerMTok: 3, OutputPerMTok: 15},
+	"claude-haiku-4-5-20251001": {InputPerMTok: 1, OutputPerMTok: 5},
 }
 
 // Cost prices a call. Unknown models are billed at the table's most

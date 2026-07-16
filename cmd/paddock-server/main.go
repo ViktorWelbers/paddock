@@ -15,10 +15,10 @@ import (
 	"syscall"
 	"time"
 
-	_ "modernc.org/sqlite"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	_ "modernc.org/sqlite"
 
 	"github.com/viktorwelbers/paddock/internal/api"
 	"github.com/viktorwelbers/paddock/internal/audit"
@@ -37,6 +37,7 @@ func main() {
 	egressProxyURL := flag.String("egress-proxy-url", "", "gateway CONNECT proxy URL injected as HTTP(S)_PROXY into sandboxes (empty = sandboxes get no egress)")
 	workspaceSize := flag.String("workspace-size-limit", "2Gi", "size limit of the per-session /workspace volume")
 	kubeconfig := flag.String("kubeconfig", "", "kubeconfig path; empty = in-cluster config if available, else no-op provisioner")
+	namespace := flag.String("sandbox-namespace", "", "namespace sandboxes run in (empty = this pod's own, which is what the chart's Role grants; only set this if you bound the provisioner Role elsewhere)")
 	seedBudgetUSD := flag.Float64("seed-budget-usd", 25, "create a 'default' budget with this limit if none exists (dev convenience, 0 disables)")
 	flag.Parse()
 
@@ -69,12 +70,14 @@ func main() {
 		}
 	}
 
+	ns := sandboxNamespace(*namespace)
 	h := &api.Handler{
 		Sessions:    sessions,
 		Ledger:      ledger,
 		Audit:       auditStore,
-		Provisioner: newProvisioner(*kubeconfig),
+		Provisioner: newProvisioner(*kubeconfig, ns),
 		Config: api.Config{
+			Namespace:      ns,
 			AgentImage:     *agentImage,
 			AgentImages:    parseAgentImages(*agentImages),
 			GatewayURL:     *gatewayURL,
@@ -126,7 +129,8 @@ func parseAgentImages(s string) map[string]string {
 
 // newProvisioner picks the sandbox provisioner: an explicit kubeconfig wins,
 // then in-cluster config when running inside Kubernetes, else no-op.
-func newProvisioner(kubeconfig string) sandbox.Provisioner {
+// Sandboxes are created in namespace, which is the server's own.
+func newProvisioner(kubeconfig, namespace string) sandbox.Provisioner {
 	var cfg *rest.Config
 	var err error
 	switch {
@@ -150,5 +154,24 @@ func newProvisioner(kubeconfig string) sandbox.Provisioner {
 	if err != nil {
 		log.Fatalf("k8s client: %v", err)
 	}
-	return &sandbox.K8s{Client: client}
+	log.Printf("sandboxes will run in namespace %q", namespace)
+	return &sandbox.K8s{Client: client, Namespace: namespace}
+}
+
+// sandboxNamespace resolves where sandboxes run: the flag wins, otherwise the
+// namespace this pod is in (the chart projects it via the downward API), and
+// finally "paddock" for out-of-cluster development.
+func sandboxNamespace(flagVal string) string {
+	if flagVal != "" {
+		return flagVal
+	}
+	if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
+		return ns
+	}
+	if raw, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+		if ns := strings.TrimSpace(string(raw)); ns != "" {
+			return ns
+		}
+	}
+	return "paddock"
 }

@@ -2,13 +2,12 @@ package sandbox
 
 import (
 	"testing"
-
-	corev1 "k8s.io/api/core/v1"
 )
 
 func testSpec() Spec {
 	return Spec{
 		SessionID:    "abc123",
+		Namespace:    "paddock",
 		User:         "viktor",
 		AgentImage:   "ghcr.io/paddock/agent-claude:latest",
 		GatewayURL:   "http://paddock-gateway.paddock.svc:8081/anthropic",
@@ -22,11 +21,11 @@ func TestRenderIsolationInvariants(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if res.Namespace.Name != "paddock-ses-abc123" {
-		t.Errorf("namespace = %q", res.Namespace.Name)
+	pod := res.Pod
+	if pod.Namespace != "paddock" || pod.Name != "paddock-ses-abc123" {
+		t.Errorf("pod = %s/%s, want paddock/paddock-ses-abc123", pod.Namespace, pod.Name)
 	}
 
-	pod := res.Pod
 	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
 		t.Error("service account token must not be mounted into sandboxes")
 	}
@@ -74,9 +73,42 @@ func TestRenderIsolationInvariants(t *testing.T) {
 		t.Errorf("egress peer selector = %q, want the gateway component", gw)
 	}
 
-	secrets := res.ResourceQuota.Spec.Hard[corev1.ResourceSecrets]
-	if secrets.Value() != 0 {
-		t.Error("session namespaces must not allow secrets")
+}
+
+// The sandbox shares a namespace with the control plane, so a NetworkPolicy
+// that selected broadly would firewall the server and gateway themselves.
+func TestRenderNetpolSelectsOnlyItsOwnPod(t *testing.T) {
+	res, err := Render(testSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := res.NetworkPolicy.Spec.PodSelector
+	if len(sel.MatchLabels) == 0 {
+		t.Fatal("netpol pod selector is empty: it would select every pod in the namespace, control plane included")
+	}
+	if sel.MatchLabels["paddock.dev/session"] != "abc123" {
+		t.Errorf("netpol selects %v, want only session abc123's pod", sel.MatchLabels)
+	}
+	if res.Pod.Labels["paddock.dev/session"] != "abc123" {
+		t.Error("the pod must carry the label its NetworkPolicy selects, or it gets no policy at all")
+	}
+	if res.NetworkPolicy.Name != res.Pod.Name {
+		t.Errorf("netpol %q and pod %q must both be session-scoped to coexist in a shared namespace", res.NetworkPolicy.Name, res.Pod.Name)
+	}
+}
+
+// Sandboxes sit next to the control plane, whose Services select on
+// app.kubernetes.io/name. A sandbox carrying those labels would quietly
+// become an endpoint of the gateway Service.
+func TestRenderPodIsNotAControlPlaneServiceEndpoint(t *testing.T) {
+	res, err := Render(testSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, label := range []string{"app.kubernetes.io/name", "app.kubernetes.io/instance", "paddock.dev/component"} {
+		if v, ok := res.Pod.Labels[label]; ok {
+			t.Errorf("sandbox pod carries %s=%q: the control plane's Services select on it and would route to sandboxes", label, v)
+		}
 	}
 }
 

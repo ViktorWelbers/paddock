@@ -13,13 +13,15 @@ Both server and gateway are single static Go binaries. MVP storage is SQLite (on
 ## Session lifecycle
 
 1. `paddock run claude` → `POST /v1/sessions` on `paddock-server`.
-2. Server checks the user's budget has headroom, writes the session row, and asks the **sandbox provisioner** to create:
-   - a per-session **Namespace** (`paddock-ses-<id>`),
-   - a **Pod** from an agent image (Claude Code preinstalled) with env `ANTHROPIC_BASE_URL=<gateway>/anthropic` and a session-scoped token — *never a real provider key*,
-   - a **NetworkPolicy** allowing egress only to the gateway service (+ DNS),
-   - a **ResourceQuota** (CPU/mem caps).
+2. Server checks the user's budget has headroom, writes the session row, and asks the **sandbox provisioner** to create, in the control plane's own namespace:
+   - a **Pod** named `paddock-ses-<id>` from an agent image (Claude Code preinstalled), with CPU/memory limits, no service-account token, all capabilities dropped, and env `ANTHROPIC_BASE_URL=<gateway>/anthropic` plus a session-scoped token — *never a real provider key*,
+   - a **NetworkPolicy** of the same name, selecting that one pod, allowing egress only to the gateway's ports (+ DNS).
 3. The agent runs. All model traffic goes through the gateway because the sandbox literally cannot reach anywhere else.
-4. `DELETE /v1/sessions/{id}` (or TTL) tears the namespace down. Audit events outlive the session.
+4. `DELETE /v1/sessions/{id}` (or TTL) deletes the pod and its policy. Audit events outlive the session.
+
+Sessions are pods, not namespaces. The isolation that does the work is per-pod — the NetworkPolicy, the container limits, the missing service-account token — and none of it came from the namespace boundary. What a namespace *did* cost was cluster-scoped RBAC to create and delete namespaces on demand, which is exactly the permission a platform team is least willing to grant. The server now needs a plain Role in one namespace. The API reports each session's `namespace` and `pod` so clients never reconstruct the layout themselves.
+
+The one thing the shared namespace takes away is the per-session `ResourceQuota` — quotas are namespace-scoped, and in a shared namespace it would meter the control plane too. Its caps survive elsewhere: CPU and memory as container limits, and the pod/service/secret counts by the agent having no API credentials to create anything with.
 
 ## Gateway data path
 

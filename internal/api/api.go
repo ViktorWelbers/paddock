@@ -26,6 +26,11 @@ type Session struct {
 	Token     string    `json:"token,omitempty"` // returned once on create
 	Status    string    `json:"status"`          // "running" | "deleted"
 	CreatedAt time.Time `json:"created_at"`
+
+	// Where the sandbox runs. Derived from server config rather than stored,
+	// and reported so clients never have to guess the cluster layout.
+	Namespace string `json:"namespace,omitempty"`
+	Pod       string `json:"pod,omitempty"`
 }
 
 type Store struct {
@@ -116,6 +121,17 @@ type Config struct {
 	OpenAIModel    string            // model id pinned for those agents (empty = not configured)
 	EgressProxyURL string            // gateway CONNECT proxy for governed egress (empty = no egress)
 	WorkspaceSize  string            // /workspace emptyDir size limit (empty = sandbox default)
+	Namespace      string            // namespace the sandboxes run in (the server's own)
+}
+
+// locate stamps a session with where its sandbox lives, for clients that need
+// to reach the pod directly (`paddock attach`).
+func (c Config) locate(sess Session) Session {
+	if sess.Status == "running" {
+		sess.Namespace = c.Namespace
+		sess.Pod = sandbox.ResourceName(sess.ID)
+	}
+	return sess
 }
 
 // imageFor picks the sandbox image for an agent; empty means unsupported.
@@ -215,6 +231,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	err = h.Provisioner.Create(r.Context(), sandbox.Spec{
 		SessionID:          sess.ID,
+		Namespace:          h.Config.Namespace,
 		User:               sess.User,
 		Agent:              sess.Agent,
 		AgentImage:         image,
@@ -234,7 +251,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 		SessionID: sess.ID, Actor: sess.User, Kind: audit.KindSessionCreated,
 		Payload: map[string]any{"agent": sess.Agent, "budget_id": sess.BudgetID},
 	})
-	writeJSON(w, http.StatusCreated, sess)
+	writeJSON(w, http.StatusCreated, h.Config.locate(sess))
 }
 
 func (h *Handler) listSessions(w http.ResponseWriter, _ *http.Request) {
@@ -245,6 +262,9 @@ func (h *Handler) listSessions(w http.ResponseWriter, _ *http.Request) {
 	}
 	if sessions == nil {
 		sessions = []Session{}
+	}
+	for i, s := range sessions {
+		sessions[i] = h.Config.locate(s)
 	}
 	writeJSON(w, http.StatusOK, sessions)
 }
@@ -259,7 +279,7 @@ func (h *Handler) getSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, sess)
+	writeJSON(w, http.StatusOK, h.Config.locate(sess))
 }
 
 func (h *Handler) deleteSession(w http.ResponseWriter, r *http.Request) {

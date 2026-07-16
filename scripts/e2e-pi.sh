@@ -35,20 +35,22 @@ RESP=$(curl -sf -X POST "$SERVER/v1/sessions" -H 'content-type: application/json
   || fail "session create rejected — is the pi agent configured (agentImagePi + gateway.openai.*)?"
 SID=$(echo "$RESP" | json "['id']")
 echo "session: $SID"
-NS="paddock-ses-$SID"
+# The server reports where the sandbox landed; sessions share its namespace.
+NS=$(echo "$RESP" | json "['namespace']")
+POD=$(echo "$RESP" | json "['pod']")
 
 step "wait for sandbox pod"
-kubectl -n "$NS" wait --for=condition=Ready pod/agent --timeout=180s
+kubectl -n "$NS" wait --for=condition=Ready pod/"$POD" --timeout=180s
 
 step "sandbox env: openai gateway URL + session token (never a real key)"
-kubectl -n "$NS" exec agent -- printenv PADDOCK_OPENAI_BASE_URL | grep -q '/openai/v1' \
+kubectl -n "$NS" exec "$POD" -- printenv PADDOCK_OPENAI_BASE_URL | grep -q '/openai/v1' \
   || fail "PADDOCK_OPENAI_BASE_URL not set in sandbox"
-kubectl -n "$NS" exec agent -- printenv PI_API_KEY | grep -q '^pdk_' \
+kubectl -n "$NS" exec "$POD" -- printenv PI_API_KEY | grep -q '^pdk_' \
   || fail "PI_API_KEY in sandbox is not a pdk_ session token"
-kubectl -n "$NS" exec agent -- printenv PADDOCK_MODEL || fail "PADDOCK_MODEL not set"
+kubectl -n "$NS" exec "$POD" -- printenv PADDOCK_MODEL || fail "PADDOCK_MODEL not set"
 
 step "netpol: sandbox has no egress besides the gateway"
-if kubectl -n "$NS" exec agent -- node -e '
+if kubectl -n "$NS" exec "$POD" -- node -e '
   fetch("https://example.com", {signal: AbortSignal.timeout(8000)})
     .then(() => process.exit(0)).catch(() => process.exit(1));
 ' >/dev/null 2>&1; then
@@ -58,7 +60,7 @@ echo "ok (direct egress blocked; only the gateway may talk to vLLM)"
 
 step "pi runs a governed completion inside the sandbox"
 # stdin must be closed: pi's -p mode waits on an open stdin.
-OUT=$(kubectl -n "$NS" exec agent -- sh -c \
+OUT=$(kubectl -n "$NS" exec "$POD" -- sh -c \
   'pi --no-session --no-tools -p "Reply with exactly one word: PONG" </dev/null 2>&1') \
   || { echo "$OUT"; fail "pi exited non-zero inside the sandbox"; }
 echo "$OUT" | tail -3
@@ -79,9 +81,10 @@ echo "ok"
 step "delete session"
 curl -sf -X DELETE "$SERVER/v1/sessions/$SID" -o /dev/null
 for _ in $(seq 30); do
-  kubectl get ns "$NS" >/dev/null 2>&1 || break
+  kubectl -n "$NS" get pod "$POD" >/dev/null 2>&1 || break
   sleep 2
 done
+kubectl -n "$NS" get pod "$POD" >/dev/null 2>&1 && fail "sandbox pod $POD survived the session delete"
 SID=""
 echo "ok"
 

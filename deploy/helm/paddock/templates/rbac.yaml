@@ -6,31 +6,29 @@ metadata:
   annotations: {{- toYaml . | nindent 4 }}
   {{- end }}
 ---
-# The server creates and tears down per-session namespaces with their pods,
-# network policies and quotas. Cluster-scoped because session namespaces are
-# created dynamically.
+# Sandboxes run in this namespace alongside the control plane, so the server
+# needs nothing cluster-scoped: it never creates a namespace and cannot touch
+# anything outside its own. That matters — paddock has to install into
+# clusters where nobody is handing out cluster-admin.
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
   name: {{ .Release.Name }}-provisioner
 rules:
   - apiGroups: [""]
-    resources: [namespaces]
-    verbs: [create, delete, get]
-  - apiGroups: [""]
-    resources: [pods, resourcequotas]
+    resources: [pods]
     verbs: [create, delete, get, list]
   - apiGroups: [networking.k8s.io]
     resources: [networkpolicies]
     verbs: [create, delete, get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
   name: {{ .Release.Name }}-provisioner
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
+  kind: Role
   name: {{ .Release.Name }}-provisioner
 subjects:
   - kind: ServiceAccount

@@ -1,6 +1,14 @@
-// Package sandbox renders and provisions the per-session isolation set: a
-// dedicated Namespace, the agent Pod, a NetworkPolicy that only allows
-// egress to the Paddock gateway (plus DNS), and a ResourceQuota.
+// Package sandbox renders and provisions the per-session isolation set: the
+// agent Pod and a NetworkPolicy that only allows egress to the Paddock
+// gateway (plus DNS).
+//
+// Sessions share the control plane's namespace rather than getting one each.
+// The isolation that matters is per-pod — the NetworkPolicy selects the
+// session's own pod, the container carries its own CPU/memory limits, drops
+// all capabilities, and gets no service-account token — none of which a
+// namespace boundary was adding. What the namespace did add was a
+// requirement for cluster-scoped RBAC to create and delete namespaces, which
+// put paddock out of reach of anyone who can't grant it.
 //
 // Everything is rendered in one place so isolation upgrades (gVisor
 // runtimeClass, Kata) are a config change, not a rearchitecture.
@@ -35,6 +43,7 @@ const (
 // Spec describes one sandbox session.
 type Spec struct {
 	SessionID    string
+	Namespace    string // where the sandbox runs: the control plane's own namespace
 	User         string
 	Agent        string // "claude" (default), "pi", ...; selects the env contract
 	AgentImage   string // e.g. an image with Claude Code preinstalled
@@ -164,24 +173,23 @@ func urlPort(raw string) (int32, bool) {
 	}
 }
 
-// NamespaceName returns the per-session namespace.
-func NamespaceName(sessionID string) string {
+// ResourceName returns the name shared by a session's pod and NetworkPolicy.
+// Sessions share a namespace, so the name has to carry the session id.
+func ResourceName(sessionID string) string {
 	return "paddock-ses-" + sessionID
 }
 
 // Resources is the rendered isolation set for one session.
 type Resources struct {
-	Namespace     *corev1.Namespace
 	Pod           *corev1.Pod
 	NetworkPolicy *netv1.NetworkPolicy
-	ResourceQuota *corev1.ResourceQuota
 }
 
 // Render builds the isolation set without touching a cluster, so it can be
 // unit-tested and dry-run.
 func Render(spec Spec) (Resources, error) {
-	if spec.SessionID == "" || spec.AgentImage == "" {
-		return Resources{}, fmt.Errorf("sandbox spec requires SessionID and AgentImage")
+	if spec.SessionID == "" || spec.AgentImage == "" || spec.Namespace == "" {
+		return Resources{}, fmt.Errorf("sandbox spec requires SessionID, AgentImage and Namespace")
 	}
 	if spec.Agent == "pi" {
 		if spec.OpenAIURL == "" || spec.Model == "" {
@@ -200,7 +208,8 @@ func Render(spec Spec) (Resources, error) {
 		spec.WorkspaceSizeLimit = "2Gi"
 	}
 	workspaceLimit := resource.MustParse(spec.WorkspaceSizeLimit)
-	ns := NamespaceName(spec.SessionID)
+	ns := spec.Namespace
+	name := ResourceName(spec.SessionID)
 	labels := map[string]string{
 		labelSession:   spec.SessionID,
 		labelManagedBy: "paddock",
@@ -208,13 +217,9 @@ func Render(spec Spec) (Resources, error) {
 	falseVal := false
 	trueVal := true
 
-	namespace := &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: ns, Labels: labels},
-	}
-
 	fsGroup := int64(10001)
 	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "agent", Namespace: ns, Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels},
 		Spec: corev1.PodSpec{
 			// The default token would let the agent talk to the k8s API.
 			AutomountServiceAccountToken: &falseVal,
@@ -262,9 +267,12 @@ func Render(spec Spec) (Resources, error) {
 	udp := corev1.ProtocolUDP
 	tcp := corev1.ProtocolTCP
 	netpol := &netv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: "egress-gateway-only", Namespace: ns, Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels},
 		Spec: netv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{}, // every pod in the session namespace
+			// Only this session's pod. The namespace is shared with the
+			// control plane, so an empty selector here would firewall the
+			// server and gateway too.
+			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{labelSession: spec.SessionID}},
 			PolicyTypes: []netv1.PolicyType{netv1.PolicyTypeIngress, netv1.PolicyTypeEgress},
 			// No ingress rules: nothing may connect in.
 			Egress: []netv1.NetworkPolicyEgressRule{
@@ -292,20 +300,13 @@ func Render(spec Spec) (Resources, error) {
 		},
 	}
 
-	quota := &corev1.ResourceQuota{
-		ObjectMeta: metav1.ObjectMeta{Name: "session-quota", Namespace: ns, Labels: labels},
-		Spec: corev1.ResourceQuotaSpec{
-			Hard: corev1.ResourceList{
-				corev1.ResourcePods:          resource.MustParse("2"),
-				corev1.ResourceLimitsCPU:     resource.MustParse(spec.CPULimit),
-				corev1.ResourceLimitsMemory:  resource.MustParse(spec.MemLimit),
-				corev1.ResourceServices:      resource.MustParse("0"),
-				corev1.ResourceSecrets:       resource.MustParse("0"),
-			},
-		},
-	}
-
-	return Resources{Namespace: namespace, Pod: pod, NetworkPolicy: netpol, ResourceQuota: quota}, nil
+	// No ResourceQuota: it is namespace-scoped, and the namespace now holds
+	// the control plane, so a per-session quota would meter the server and
+	// gateway too. Its caps are covered elsewhere — cpu/memory by the
+	// container limits above, and the pod/service/secret counts by the fact
+	// that the agent has no service-account token and so cannot ask the API
+	// server for anything at all.
+	return Resources{Pod: pod, NetworkPolicy: netpol}, nil
 }
 
 // Provisioner creates and destroys sandboxes. The server depends on this
@@ -319,40 +320,43 @@ type Provisioner interface {
 // control plane only. Useful for local development of the API surface.
 type Noop struct{}
 
-func (Noop) Create(context.Context, Spec) error  { return nil }
+func (Noop) Create(context.Context, Spec) error   { return nil }
 func (Noop) Delete(context.Context, string) error { return nil }
 
-// K8s provisions sandboxes on a real cluster.
+// K8s provisions sandboxes on a real cluster, into Namespace (its own).
 type K8s struct {
-	Client kubernetes.Interface
+	Client    kubernetes.Interface
+	Namespace string
 }
 
 func (k *K8s) Create(ctx context.Context, spec Spec) error {
+	spec.Namespace = k.Namespace
 	res, err := Render(spec)
 	if err != nil {
 		return err
 	}
-	if _, err := k.Client.CoreV1().Namespaces().Create(ctx, res.Namespace, metav1.CreateOptions{}); err != nil {
-		return fmt.Errorf("create namespace: %w", err)
-	}
-	ns := res.Namespace.Name
-	if _, err := k.Client.CoreV1().ResourceQuotas(ns).Create(ctx, res.ResourceQuota, metav1.CreateOptions{}); err != nil {
-		return fmt.Errorf("create quota: %w", err)
-	}
-	if _, err := k.Client.NetworkingV1().NetworkPolicies(ns).Create(ctx, res.NetworkPolicy, metav1.CreateOptions{}); err != nil {
+	if _, err := k.Client.NetworkingV1().NetworkPolicies(k.Namespace).Create(ctx, res.NetworkPolicy, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("create networkpolicy: %w", err)
 	}
 	// The pod goes last: it must never exist without its NetworkPolicy.
-	if _, err := k.Client.CoreV1().Pods(ns).Create(ctx, res.Pod, metav1.CreateOptions{}); err != nil {
+	if _, err := k.Client.CoreV1().Pods(k.Namespace).Create(ctx, res.Pod, metav1.CreateOptions{}); err != nil {
+		// Don't leave the policy behind for a pod that never came up.
+		_ = k.Client.NetworkingV1().NetworkPolicies(k.Namespace).Delete(ctx, res.NetworkPolicy.Name, metav1.DeleteOptions{})
 		return fmt.Errorf("create pod: %w", err)
 	}
 	return nil
 }
 
+// Delete removes the session's pod and policy. Deleting a namespace used to
+// cascade for us; now each object goes explicitly, and the pod goes first so
+// a sandbox is never left running without its NetworkPolicy.
 func (k *K8s) Delete(ctx context.Context, sessionID string) error {
-	err := k.Client.CoreV1().Namespaces().Delete(ctx, NamespaceName(sessionID), metav1.DeleteOptions{})
-	if apierrors.IsNotFound(err) {
-		return nil
+	name := ResourceName(sessionID)
+	if err := k.Client.CoreV1().Pods(k.Namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete pod: %w", err)
 	}
-	return err
+	if err := k.Client.NetworkingV1().NetworkPolicies(k.Namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete networkpolicy: %w", err)
+	}
+	return nil
 }

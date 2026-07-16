@@ -16,7 +16,7 @@ Coding agents are being adopted faster than platform teams can govern them. Toda
 Paddock gives the platform team a single control point:
 
 - **Budgets** — hierarchical (org → team → user → session) spend ledgers with soft warnings and hard stops. The agent's model traffic is proxied, token usage is priced, and the ledger is debited in real time.
-- **Sandboxes** — each session runs in an isolated pod in a locked-down namespace: egress allowed only to the Paddock gateway, no secrets mounted, resource quotas enforced. Real provider API keys never enter the sandbox.
+- **Sandboxes** — each session runs in a locked-down pod: egress allowed only to the Paddock gateway, no secrets mounted, no service-account token, CPU and memory capped. Real provider API keys never enter the sandbox. Sessions are pods in paddock's own namespace, so the server installs with a namespaced Role — no cluster-scoped RBAC.
 - **Server-side MCP** — MCP servers are centrally administered by the platform team, run outside the sandbox, and have their credentials injected at the gateway. Developers get capabilities, not secrets.
 - **Policies** — OPA/Rego decisions on every tool and MCP call. Your platform team already speaks Rego; reuse the pipelines and review process you have for Gatekeeper.
 - **Audit** — append-only event log of sessions, model calls, tool calls, and policy decisions, designed to back DORA / EU AI Act evidence requirements.

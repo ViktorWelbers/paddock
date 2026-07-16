@@ -65,6 +65,9 @@ spec:
             - --egress-proxy-url=http://{{ .Release.Name }}-gateway.{{ .Release.Namespace }}.svc:{{ .Values.gateway.egress.port }}
             {{- end }}
             - --workspace-size-limit={{ .Values.server.workspaceSizeLimit }}
+            # Sandboxes are pods in this namespace; the provisioner Role is
+            # bound here and nowhere else.
+            - --sandbox-namespace={{ .Release.Namespace }}
             - --seed-budget-usd={{ .Values.server.seedBudgetUSD }}
           ports:
             - containerPort: {{ .Values.server.port }}

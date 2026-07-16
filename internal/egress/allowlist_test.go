@@ -18,16 +18,16 @@ func TestMatchGroups(t *testing.T) {
 		want string // first group expected, "" = no match
 	}{
 		{"pypi.org", "package_registries"},
-		{"PyPI.org", "package_registries"},   // case-insensitive
-		{"pypi.org.", "package_registries"},  // trailing dot
-		{"github.com", "github"},             // exact apex
-		{"codeload.github.com", "github"},    // wildcard subdomain
-		{"api.github.com", "github"},         // wildcard subdomain
-		{"evil.com", ""},                     // not listed
-		{"notgithub.com", ""},                // suffix trickery
-		{"github.com.evil.com", ""},          // suffix trickery
-		{"1.2.3.4", ""},                      // IP literal never matches
-		{"[2001:db8::1]", ""},                // v6 literal (bracketless here) never matches
+		{"PyPI.org", "package_registries"},  // case-insensitive
+		{"pypi.org.", "package_registries"}, // trailing dot
+		{"github.com", "github"},            // exact apex
+		{"codeload.github.com", "github"},   // wildcard subdomain
+		{"api.github.com", "github"},        // wildcard subdomain
+		{"evil.com", ""},                    // not listed
+		{"notgithub.com", ""},               // suffix trickery
+		{"github.com.evil.com", ""},         // suffix trickery
+		{"1.2.3.4", ""},                     // IP literal never matches
+		{"[2001:db8::1]", ""},               // v6 literal (bracketless here) never matches
 	}
 	for _, c := range cases {
 		got := a.MatchGroups(c.host)
