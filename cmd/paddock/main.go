@@ -1,20 +1,11 @@
-// paddock is the developer CLI. It talks to paddock-server over HTTP.
-//
-//	paddock run <agent>       spawn a governed session, upload the current
-//	                          directory, and attach (--detach to skip the
-//	                          terminal, --no-push to skip the upload)
-//	paddock attach <id>       attach a terminal to a running session
-//	paddock push <id> [dir]   upload a directory into a session's /workspace
-//	paddock pull <id> [dir]   download a session's /workspace
-//	paddock ls                list sessions
-//	paddock rm <id>           tear a session down
-//	paddock budget [id]       show budget headroom
-//	paddock events <id>       show a session's audit trail
-//	paddock config            show/save CLI settings (e.g. the server URL)
+// paddock is the developer CLI. It talks to paddock-server over HTTP; the
+// server owns the cluster, so this binary needs no kubeconfig for anything
+// except `attach` (until the server-side relay lands).
 package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +14,8 @@ import (
 	"os/user"
 	"text/tabwriter"
 	"time"
+
+	"github.com/urfave/cli/v3"
 )
 
 func currentUser() string {
@@ -33,114 +26,183 @@ func currentUser() string {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		usage()
+	cmd := &cli.Command{
+		Name:  "paddock",
+		Usage: "run coding agents in governed sandboxes",
+		Description: "Every session is a locked-down pod: model calls are metered against a\n" +
+			"budget, internet access is limited to an allowlist, and the whole lot is\n" +
+			"audited. `paddock config set server <url>` once, then `paddock run` from\n" +
+			"your project.",
+		Commands: []*cli.Command{
+			runCmd(),
+			attachCmd(),
+			pushCmd(),
+			pullCmd(),
+			lsCmd(),
+			rmCmd(),
+			budgetCmd(),
+			eventsCmd(),
+			configCmd(),
+		},
 	}
-	var err error
-	switch os.Args[1] {
-	case "run":
-		err = runSession(os.Args[2:])
-	case "attach":
-		if len(os.Args) < 3 {
-			usage()
-		}
-		command := os.Args[3:]
-		if len(command) == 0 {
-			// Default to the session's own agent command (claude, pi, ...).
-			var sess struct {
-				Agent string `json:"agent"`
-			}
-			if err := getJSON("/v1/sessions/"+os.Args[2], &sess); err == nil && sess.Agent != "" {
-				command = []string{sess.Agent}
-			}
-		}
-		err = attachSession(os.Args[2], command)
-	case "push":
-		err = workspaceCmd(os.Args[2:], "push")
-	case "pull":
-		err = workspaceCmd(os.Args[2:], "pull")
-	case "ls":
-		err = listSessions()
-	case "rm":
-		err = withArg(os.Args[2:], deleteSession)
-	case "budget":
-		id := "default"
-		if len(os.Args) > 2 {
-			id = os.Args[2]
-		}
-		err = showBudget(id)
-	case "events":
-		err = withArg(os.Args[2:], showEvents)
-	case "config":
-		err = configCmd(os.Args[2:])
-	default:
-		usage()
-	}
-	if err != nil {
+	if err := cmd.Run(context.Background(), os.Args); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
 
-func usage() {
-	fmt.Fprintln(os.Stderr, "usage: paddock run <agent> [--detach] [--no-push] | attach <id> [cmd...] | push <id> [dir] [--clean] | pull <id> [dir] | ls | rm <id> | budget [id] | events <id> | config [set server <url>]")
-	os.Exit(2)
+func runCmd() *cli.Command {
+	return &cli.Command{
+		Name:      "run",
+		Usage:     "spawn a governed session, upload the current directory, and attach",
+		ArgsUsage: "<agent>",
+		Description: "The working directory is uploaded to the sandbox so the agent has your\n" +
+			"code. In a git repo .gitignore decides what travels; .git comes along.",
+		Flags: []cli.Flag{
+			&cli.BoolFlag{
+				Name:    "detach",
+				Aliases: []string{"d"},
+				Usage:   "leave the session running instead of attaching a terminal",
+			},
+			&cli.BoolFlag{
+				Name:  "no-push",
+				Usage: "start with an empty /workspace instead of uploading the current directory",
+			},
+		},
+		Action: func(_ context.Context, c *cli.Command) error {
+			agent := c.Args().First()
+			if agent == "" {
+				return cli.Exit("which agent? e.g. paddock run claude", 2)
+			}
+			return runSession(agent, c.Bool("detach"), !c.Bool("no-push"))
+		},
+	}
 }
 
-// workspaceCmd parses `push <id> [dir] [--clean]` / `pull <id> [dir]`.
-func workspaceCmd(args []string, verb string) error {
-	clean := false
-	var positional []string
-	for _, a := range args {
-		if a == "--clean" {
-			clean = true
-			continue
-		}
-		positional = append(positional, a)
+func attachCmd() *cli.Command {
+	return &cli.Command{
+		Name:      "attach",
+		Usage:     "attach a terminal to a running session",
+		ArgsUsage: "<id> [cmd...]",
+		Description: "With no command, runs the session's own agent (claude, pi, ...).\n" +
+			"Detaching leaves the session running; re-attach any time.",
+		Action: func(_ context.Context, c *cli.Command) error {
+			id := c.Args().First()
+			if id == "" {
+				return cli.Exit("which session? paddock ls shows them", 2)
+			}
+			command := c.Args().Tail()
+			if len(command) == 0 {
+				// Default to the session's own agent command.
+				var sess struct {
+					Agent string `json:"agent"`
+				}
+				if err := getJSON("/v1/sessions/"+id, &sess); err == nil && sess.Agent != "" {
+					command = []string{sess.Agent}
+				}
+			}
+			return attachSession(id, command)
+		},
 	}
-	if len(positional) < 1 {
-		usage()
-	}
-	dir := "."
-	if len(positional) > 1 {
-		dir = positional[1]
-	}
-	if verb == "pull" {
-		if clean {
-			return fmt.Errorf("--clean applies to push, not pull")
-		}
-		return pullWorkspace(positional[0], dir)
-	}
-	return pushWorkspace(positional[0], dir, clean)
 }
 
-func withArg(args []string, fn func(string) error) error {
-	if len(args) < 1 {
-		usage()
+func pushCmd() *cli.Command {
+	return &cli.Command{
+		Name:      "push",
+		Usage:     "upload a directory into a session's /workspace",
+		ArgsUsage: "<id> [dir]",
+		Flags: []cli.Flag{
+			&cli.BoolFlag{
+				Name:  "clean",
+				Usage: "empty /workspace first, so it mirrors the local directory exactly",
+			},
+		},
+		Action: func(_ context.Context, c *cli.Command) error {
+			id := c.Args().First()
+			if id == "" {
+				return cli.Exit("which session? paddock ls shows them", 2)
+			}
+			return pushWorkspace(id, argOr(c.Args().Get(1), "."), c.Bool("clean"))
+		},
 	}
-	return fn(args[0])
 }
 
-func runSession(args []string) error {
-	detach := false
-	push := true
-	agent := ""
-	for _, a := range args {
-		if a == "--detach" || a == "-d" {
-			detach = true
-			continue
-		}
-		if a == "--no-push" {
-			push = false
-			continue
-		}
-		if agent == "" {
-			agent = a
-		}
+func pullCmd() *cli.Command {
+	return &cli.Command{
+		Name:      "pull",
+		Usage:     "download a session's /workspace",
+		ArgsUsage: "<id> [dir]",
+		Description: "Overwrites files that the archive contains, like a git checkout, and\n" +
+			"leaves everything else alone.",
+		Action: func(_ context.Context, c *cli.Command) error {
+			id := c.Args().First()
+			if id == "" {
+				return cli.Exit("which session? paddock ls shows them", 2)
+			}
+			return pullWorkspace(id, argOr(c.Args().Get(1), "."))
+		},
 	}
-	if agent == "" {
-		usage()
+}
+
+func lsCmd() *cli.Command {
+	return &cli.Command{
+		Name:   "ls",
+		Usage:  "list sessions",
+		Action: func(_ context.Context, _ *cli.Command) error { return listSessions() },
 	}
+}
+
+func rmCmd() *cli.Command {
+	return &cli.Command{
+		Name:      "rm",
+		Usage:     "tear a session down",
+		ArgsUsage: "<id>",
+		Action: func(_ context.Context, c *cli.Command) error {
+			id := c.Args().First()
+			if id == "" {
+				return cli.Exit("which session? paddock ls shows them", 2)
+			}
+			return deleteSession(id)
+		},
+	}
+}
+
+func budgetCmd() *cli.Command {
+	return &cli.Command{
+		Name:      "budget",
+		Usage:     "show budget headroom",
+		ArgsUsage: "[id]",
+		Action: func(_ context.Context, c *cli.Command) error {
+			return showBudget(argOr(c.Args().First(), "default"))
+		},
+	}
+}
+
+func eventsCmd() *cli.Command {
+	return &cli.Command{
+		Name:      "events",
+		Usage:     "show a session's audit trail",
+		ArgsUsage: "<id>",
+		Description: "Every model call, tool call, egress attempt (allowed and denied) and\n" +
+			"workspace transfer, in order.",
+		Action: func(_ context.Context, c *cli.Command) error {
+			id := c.Args().First()
+			if id == "" {
+				return cli.Exit("which session? paddock ls shows them", 2)
+			}
+			return showEvents(id)
+		},
+	}
+}
+
+func argOr(v, fallback string) string {
+	if v == "" {
+		return fallback
+	}
+	return v
+}
+
+func runSession(agent string, detach, push bool) error {
 	body, _ := json.Marshal(map[string]string{
 		"user":      currentUser(),
 		"agent":     agent,

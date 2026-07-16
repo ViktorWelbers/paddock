@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/urfave/cli/v3"
 )
 
 // cliConfig is the developer's saved CLI configuration: set once with
@@ -50,39 +52,58 @@ func saveConfig(c cliConfig) error {
 	return os.WriteFile(path, append(raw, '\n'), 0o600)
 }
 
-// configCmd implements `paddock config [set server <url> | unset server]`.
-func configCmd(args []string) error {
-	if len(args) == 0 {
-		path, _ := configPath()
-		c := loadConfig()
-		fmt.Printf("config file: %s\n", path)
-		if c.Server == "" {
-			fmt.Println("server: (unset)")
-		} else {
-			fmt.Println("server:", c.Server)
-		}
+// configCmd implements `paddock config [set|unset] server [<url>]`.
+func configCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "config",
+		Usage: "show or save CLI settings",
+		Description: "With no arguments, prints the current settings and where they live.\n" +
+			"Saving the server URL once beats exporting PADDOCK_SERVER in every shell\n" +
+			"(the env var still wins when set).",
+		Action: func(_ context.Context, _ *cli.Command) error { return showConfig() },
+		Commands: []*cli.Command{
+			{
+				Name:      "set",
+				Usage:     "save a setting",
+				ArgsUsage: "server <url>",
+				Action: func(_ context.Context, c *cli.Command) error {
+					if c.Args().First() != "server" || c.Args().Get(1) == "" {
+						return cli.Exit("usage: paddock config set server <url>", 2)
+					}
+					cfg := loadConfig()
+					cfg.Server = c.Args().Get(1)
+					if err := saveConfig(cfg); err != nil {
+						return err
+					}
+					fmt.Println("server:", cfg.Server)
+					return nil
+				},
+			},
+			{
+				Name:      "unset",
+				Usage:     "clear a setting",
+				ArgsUsage: "server",
+				Action: func(_ context.Context, c *cli.Command) error {
+					if c.Args().First() != "server" {
+						return cli.Exit("usage: paddock config unset server", 2)
+					}
+					cfg := loadConfig()
+					cfg.Server = ""
+					return saveConfig(cfg)
+				},
+			},
+		},
+	}
+}
+
+func showConfig() error {
+	path, _ := configPath()
+	c := loadConfig()
+	fmt.Printf("config file: %s\n", path)
+	if c.Server == "" {
+		fmt.Println("server: (unset)")
 		return nil
 	}
-	switch args[0] {
-	case "set":
-		if len(args) != 3 || args[1] != "server" {
-			return errors.New("usage: paddock config set server <url>")
-		}
-		c := loadConfig()
-		c.Server = args[2]
-		if err := saveConfig(c); err != nil {
-			return err
-		}
-		fmt.Println("server:", c.Server)
-		return nil
-	case "unset":
-		if len(args) != 2 || args[1] != "server" {
-			return errors.New("usage: paddock config unset server")
-		}
-		c := loadConfig()
-		c.Server = ""
-		return saveConfig(c)
-	default:
-		return fmt.Errorf("unknown config command %q (want set or unset)", args[0])
-	}
+	fmt.Println("server:", c.Server)
+	return nil
 }
