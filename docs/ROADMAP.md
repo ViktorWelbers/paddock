@@ -39,9 +39,18 @@
 The theme: paddock currently assumes a friendly network and an attentive
 operator. Both assumptions have to go before anyone else can run it.
 
-**Next up, in order.** The first three are what a stranger hits within an hour
+**Next up, in order.** The first two are what a stranger hits within an hour
 of installing.
 
+- [ ] **Server API authentication.** Every route is unauthenticated today, which
+      is why the honest advice is "keep it cluster-internal or behind ingress
+      auth". `GET /v1/sessions/{id}/workspace` makes that worse: it hands a
+      session's files to anyone who can reach the API. Sandboxes are already
+      fenced off (the netpol is port-scoped), so this is about humans on the
+      network. Wanted: OIDC bearer tokens, `user` taken from the token rather
+      than the client's claim, and sessions owned by the user who created them.
+      Note the shape of the gap: paddock's whole claim is *who did what*, and
+      `user` is currently a string the client makes up.
 - [ ] **Server-side attach relay (websocket).** `paddock attach` is the last
       thing that talks to the Kubernetes API from the developer's machine: it
       needs a kubeconfig pointing at the right cluster, `pods/exec` rights the
@@ -52,18 +61,11 @@ of installing.
       exec stream, and carrying terminal resize. When it lands, the CLI is
       pure HTTP, `go install` gives a small binary, and `PADDOCK_KUBECONFIG`
       disappears from the docs.
-- [ ] **Server API authentication.** Every route is unauthenticated today, which
-      is why the honest advice is "keep it cluster-internal or behind ingress
-      auth". `GET /v1/sessions/{id}/workspace` makes that worse: it hands a
-      session's files to anyone who can reach the API. Sandboxes are already
-      fenced off (the netpol is port-scoped), so this is about humans on the
-      network. Wanted: OIDC bearer tokens, `user` taken from the token rather
-      than the client's claim, and sessions owned by the user who created them.
-- [ ] **Sandbox reconciliation/GC.** A control-plane restart with ephemeral
-      storage orphans running pods (observed live: the session row vanishes,
-      the pod keeps its 4Gi, and `paddock rm` 404s). Reconcile pods labelled
-      `paddock.dev/session` against the session store on startup, and adopt or
-      reap the difference.
+- [x] **Sandbox reconciliation/GC** on startup: pods and NetworkPolicies labelled
+      `paddock.dev/session` are reconciled against the session store — sandboxes
+      nobody owns are reaped, sessions whose sandbox vanished stop claiming to
+      run, and both outcomes are audited (verified live: control plane killed,
+      store deleted, restart reaped the orphan)
 
 Then:
 
@@ -75,11 +77,40 @@ Then:
       with the per-session namespace, so "how many sandboxes may this cluster
       run" is now a server-side check nobody has written. Per-user and global
       caps at session-create, plus a clear 429.
+- [x] **Runs under Pod Security Admission `restricted`** — sandboxes and the
+      control plane both, verified against a real API server. A sandbox missing
+      `seccompProfile` is not degraded, it is `Forbidden`, so every `paddock
+      run` would fail on exactly the clusters that take isolation seriously
+- [x] **Installs without an Anthropic key** when only self-hosted models are
+      served: `gateway.existingSecret` was mandatory, so a vLLM-only operator
+      had to invent a fake credential to get the chart up
+- [x] **Sandbox placement**: `nodeSelector`, `tolerations`, `runtimeClassName`
+      and `priorityClassName` — agent workloads go on the pool the platform
+      team chose, and `runtimeClassName` is the seam gVisor lands in (M5)
+- [x] **Audit writes are no longer fire-and-forget**: the egress proxy refuses
+      to open a tunnel it cannot record, and losses on paths that cannot refuse
+      are logged rather than discarded
 - [x] `opa test` examples for the shipped policies (`make policy-test`, run in CI):
       Rego that silently matches nothing looks identical to Rego that works, so
       the `omitempty` trap that cost a live bug is now a regression test platform
       teams can copy
 - [ ] Hierarchical budgets exposed in config (org/team/user)
+- [ ] **Audit pagination and retention.** `GET /v1/sessions/{id}/events` returns
+      every row a session ever produced, and governed egress writes one per
+      connection — a busy `pip install` alone is dozens. There is no `limit`, no
+      cursor, and no way to query across sessions, which is also what a SIEM
+      export (M4) will need. Nothing prunes, either: the audit table grows
+      forever inside the same SQLite file the sessions live in.
+- [ ] **Operational visibility.** No `/metrics`, no request logging, no way to
+      answer "how many sandboxes are running, what is failing, how much is
+      being spent" without reading the SQLite file. The audit store already
+      holds most of the answers; nothing exposes them. First thing an SRE asks
+      for and currently the weakest part of the operator story.
+- [ ] **Session token lifecycle.** Tokens are stored in plaintext in SQLite and
+      never expire: the sessions table is a credential database, and a session
+      that outlives its pod keeps a working token. Wanted: hash at rest (the
+      pod holds the only plaintext copy, so verification only needs the hash),
+      and expiry tied to the session's life.
 - [x] Web dashboard (sessions, spend, audit trail) — read-only, embedded in the server at `/`
 - [x] Policy decision input schema pinned + documented (`docs/ARCHITECTURE.md`)
 - [ ] Docs site, quickstart that works on kind/k3d in <10 min
