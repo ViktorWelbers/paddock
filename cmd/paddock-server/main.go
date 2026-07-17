@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"flag"
 	"log"
@@ -15,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -36,6 +38,10 @@ func main() {
 	openaiModel := flag.String("openai-model", "", "model id served by the gateway's OpenAI upstream (required to run the pi agent)")
 	egressProxyURL := flag.String("egress-proxy-url", "", "gateway CONNECT proxy URL injected as HTTP(S)_PROXY into sandboxes (empty = sandboxes get no egress)")
 	workspaceSize := flag.String("workspace-size-limit", "2Gi", "size limit of the per-session /workspace volume")
+	nodeSelector := flag.String("sandbox-node-selector", "", `JSON object pinning sandboxes to nodes, e.g. {"paddock.dev/agents":"true"}`)
+	tolerations := flag.String("sandbox-tolerations", "", `JSON array of tolerations, e.g. [{"key":"paddock.dev/agents","operator":"Exists","effect":"NoSchedule"}]`)
+	runtimeClass := flag.String("sandbox-runtime-class", "", "runtimeClassName for sandbox pods (e.g. gvisor); empty = the cluster default")
+	priorityClass := flag.String("sandbox-priority-class", "", "priorityClassName for sandbox pods; empty = the cluster default")
 	kubeconfig := flag.String("kubeconfig", "", "kubeconfig path; empty = in-cluster config if available, else no-op provisioner")
 	namespace := flag.String("sandbox-namespace", "", "namespace sandboxes run in (empty = this pod's own, which is what the chart's Role grants; only set this if you bound the provisioner Role elsewhere)")
 	seedBudgetUSD := flag.Float64("seed-budget-usd", 25, "create a 'default' budget with this limit if none exists (dev convenience, 0 disables)")
@@ -89,6 +95,12 @@ func main() {
 			OpenAIModel:    *openaiModel,
 			EgressProxyURL: *egressProxyURL,
 			WorkspaceSize:  *workspaceSize,
+			Placement: sandbox.Placement{
+				NodeSelector:      parseJSONFlag[map[string]string]("sandbox-node-selector", *nodeSelector),
+				Tolerations:       parseJSONFlag[[]corev1.Toleration]("sandbox-tolerations", *tolerations),
+				RuntimeClassName:  *runtimeClass,
+				PriorityClassName: *priorityClass,
+			},
 		},
 	}
 
@@ -113,6 +125,22 @@ func main() {
 	if err := db.Close(); err != nil {
 		log.Printf("close db: %v", err)
 	}
+}
+
+// parseJSONFlag decodes a flag whose value is a JSON document — node
+// selectors and tolerations are structured, and inventing a mini-language
+// for them would only mean re-learning Kubernetes' own. A bad value is
+// fatal: silently scheduling agents anywhere is exactly what the operator
+// set the flag to prevent.
+func parseJSONFlag[T any](name, raw string) T {
+	var v T
+	if raw == "" {
+		return v
+	}
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		log.Fatalf("--%s: %v", name, err)
+	}
+	return v
 }
 
 // agentImageMap resolves the agent → image table. --agent-image names the

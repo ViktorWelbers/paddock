@@ -121,6 +121,8 @@ type Config struct {
 	EgressProxyURL string            // gateway CONNECT proxy for governed egress (empty = no egress)
 	WorkspaceSize  string            // /workspace emptyDir size limit (empty = sandbox default)
 	Namespace      string            // namespace the sandboxes run in (the server's own)
+	// Placement pins sandboxes to the nodes the operator set aside for them.
+	Placement sandbox.Placement
 }
 
 // locate stamps a session with where its sandbox lives, for clients that need
@@ -244,6 +246,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 		SessionToken:       sess.Token,
 		EgressProxyURL:     h.Config.EgressProxyURL,
 		WorkspaceSizeLimit: h.Config.WorkspaceSize,
+		Placement:          h.Config.Placement,
 	})
 	if err != nil {
 		_ = h.Sessions.setStatus(sess.ID, "failed")

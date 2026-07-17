@@ -65,6 +65,22 @@ type Spec struct {
 	EgressProxyURL string
 	// WorkspaceSizeLimit caps the /workspace emptyDir (default 2Gi).
 	WorkspaceSizeLimit string
+	// Placement decides which nodes sandboxes are allowed to land on.
+	Placement Placement
+}
+
+// Placement is the operator's control over where agent workloads run. The
+// zero value schedules sandboxes anywhere, which is fine for a homelab and
+// wrong for a company: a sandbox runs code written by a model on behalf of
+// whoever asked, and platform teams keep that off the nodes carrying
+// everything else. NodeSelector plus Tolerations is how a cluster expresses
+// "agents belong on the tainted pool"; RuntimeClassName is the seam for
+// gVisor or Kata, where the container boundary itself gets stronger.
+type Placement struct {
+	NodeSelector      map[string]string
+	Tolerations       []corev1.Toleration
+	RuntimeClassName  string
+	PriorityClassName string
 }
 
 // agentEnv renders the provider env contract for the agent kind. The
@@ -178,6 +194,15 @@ func urlPort(raw string) (int32, bool) {
 	}
 }
 
+// runtimeClass turns the configured name into the optional field the pod
+// spec wants: unset means "the cluster default", not "a class called """.
+func runtimeClass(name string) *string {
+	if name == "" {
+		return nil
+	}
+	return &name
+}
+
 // ResourceName returns the name shared by a session's pod and NetworkPolicy.
 // Sessions share a namespace, so the name has to carry the session id.
 func ResourceName(sessionID string) string {
@@ -230,6 +255,10 @@ func Render(spec Spec) (Resources, error) {
 			AutomountServiceAccountToken: &falseVal,
 			RestartPolicy:                corev1.RestartPolicyNever,
 			EnableServiceLinks:           &falseVal,
+			NodeSelector:                 spec.Placement.NodeSelector,
+			Tolerations:                  spec.Placement.Tolerations,
+			PriorityClassName:            spec.Placement.PriorityClassName,
+			RuntimeClassName:             runtimeClass(spec.Placement.RuntimeClassName),
 			// fsGroup makes the workspace emptyDir writable for the
 			// non-root agent uid (emptyDir mounts root:root otherwise).
 			// The rest satisfies Pod Security Admission's "restricted"

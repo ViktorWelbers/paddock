@@ -236,6 +236,54 @@ func TestRenderNetpolPortScoping(t *testing.T) {
 	}
 }
 
+func TestRenderPlacement(t *testing.T) {
+	spec := testSpec()
+	spec.Placement = Placement{
+		NodeSelector: map[string]string{"paddock.dev/agents": "true"},
+		Tolerations: []corev1.Toleration{{
+			Key: "paddock.dev/agents", Operator: corev1.TolerationOpExists,
+			Effect: corev1.TaintEffectNoSchedule,
+		}},
+		RuntimeClassName:  "gvisor",
+		PriorityClassName: "paddock-sandbox",
+	}
+	res, err := Render(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := res.Pod.Spec
+	if pod.NodeSelector["paddock.dev/agents"] != "true" {
+		t.Errorf("node selector = %v, want the agent pool", pod.NodeSelector)
+	}
+	if len(pod.Tolerations) != 1 || pod.Tolerations[0].Key != "paddock.dev/agents" {
+		t.Errorf("tolerations = %v: without them the agent pool's taint repels the sandbox it was created for", pod.Tolerations)
+	}
+	if pod.RuntimeClassName == nil || *pod.RuntimeClassName != "gvisor" {
+		t.Errorf("runtimeClassName = %v, want gvisor", pod.RuntimeClassName)
+	}
+	if pod.PriorityClassName != "paddock-sandbox" {
+		t.Errorf("priorityClassName = %q", pod.PriorityClassName)
+	}
+}
+
+// The zero Placement must leave the fields absent rather than set to empty
+// values: a runtimeClassName of "" is a class named "", and the API server
+// rejects the pod for it.
+func TestRenderWithoutPlacementLeavesSchedulingToTheCluster(t *testing.T) {
+	res, err := Render(testSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := res.Pod.Spec
+	if pod.RuntimeClassName != nil {
+		t.Errorf("runtimeClassName = %v, want unset", *pod.RuntimeClassName)
+	}
+	if pod.NodeSelector != nil || pod.Tolerations != nil || pod.PriorityClassName != "" {
+		t.Errorf("unconfigured placement leaked into the pod: selector=%v tolerations=%v priority=%q",
+			pod.NodeSelector, pod.Tolerations, pod.PriorityClassName)
+	}
+}
+
 func TestRenderRejectsIncompleteSpec(t *testing.T) {
 	spec := testSpec()
 	spec.GatewayURL = ""

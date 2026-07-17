@@ -9,6 +9,26 @@ agentImage: ghcr.io/paddock/agent-claude:latest
 # Empty = `paddock run pi` is rejected. Requires gateway.openai.upstream.
 agentImagePi: ""
 
+# Where session sandboxes are allowed to run. A sandbox executes code an LLM
+# wrote, so most clusters want them somewhere specific rather than next to
+# everything else. Taint a node pool and pin them to it:
+#
+#   nodeSelector: {paddock.dev/agents: "true"}
+#   tolerations:
+#     - key: paddock.dev/agents
+#       operator: Exists
+#       effect: NoSchedule
+#
+# runtimeClassName is the stronger-isolation seam: set it to gvisor (or kata)
+# on a cluster with that runtime installed and sandboxes get a syscall
+# boundary instead of a namespace one. Nothing here affects the control plane
+# — its own scheduling knobs are at the bottom of this file.
+sandbox:
+  nodeSelector: {}
+  tolerations: []
+  runtimeClassName: ""
+  priorityClassName: ""
+
 server:
   port: 8080
   # Dev convenience: seed a 'default' budget with this USD limit (0 disables).
