@@ -18,13 +18,21 @@ import (
 	"github.com/viktorwelbers/paddock/internal/sandbox"
 )
 
+// Session statuses. A session is running until something ends it: the user
+// (deleted), or the sandbox going away underneath it (failed).
+const (
+	statusRunning = "running"
+	statusDeleted = "deleted"
+	statusFailed  = "failed"
+)
+
 type Session struct {
 	ID        string    `json:"id"`
 	User      string    `json:"user"`
 	Agent     string    `json:"agent"` // "claude", "opencode", ...
 	BudgetID  string    `json:"budget_id"`
 	Token     string    `json:"token,omitempty"` // returned once on create
-	Status    string    `json:"status"`          // "running" | "deleted"
+	Status    string    `json:"status"`          // running | deleted | failed
 	CreatedAt time.Time `json:"created_at"`
 
 	// Where the sandbox runs. Derived from server config rather than stored,
@@ -128,7 +136,7 @@ type Config struct {
 // locate stamps a session with where its sandbox lives, for clients that need
 // to reach the pod directly (`paddock attach`).
 func (c Config) locate(sess Session) Session {
-	if sess.Status == "running" {
+	if sess.Status == statusRunning {
 		sess.Namespace = c.Namespace
 		sess.Pod = sandbox.ResourceName(sess.ID)
 	}
@@ -227,7 +235,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 		Agent:     req.Agent,
 		BudgetID:  req.BudgetID,
 		Token:     "pdk_" + randomID(24),
-		Status:    "running",
+		Status:    statusRunning,
 		CreatedAt: time.Now().UTC(),
 	}
 	if err := h.Sessions.insert(sess); err != nil {
@@ -249,7 +257,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 		Placement:          h.Config.Placement,
 	})
 	if err != nil {
-		_ = h.Sessions.setStatus(sess.ID, "failed")
+		_ = h.Sessions.setStatus(sess.ID, statusFailed)
 		http.Error(w, "provision sandbox: "+err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -303,7 +311,7 @@ func (h *Handler) deleteSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "teardown sandbox: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	if err := h.Sessions.setStatus(id, "deleted"); err != nil {
+	if err := h.Sessions.setStatus(id, statusDeleted); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

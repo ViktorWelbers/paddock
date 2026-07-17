@@ -357,14 +357,19 @@ func Render(spec Spec) (Resources, error) {
 type Provisioner interface {
 	Create(ctx context.Context, spec Spec) error
 	Delete(ctx context.Context, sessionID string) error
+	// List reports the sessions that still have resources in the cluster,
+	// which is not the same set the session store believes in — see
+	// api.Handler.Reconcile.
+	List(ctx context.Context) ([]string, error)
 }
 
 // Noop is used when no kubeconfig is configured: sessions exist in the
 // control plane only. Useful for local development of the API surface.
 type Noop struct{}
 
-func (Noop) Create(context.Context, Spec) error   { return nil }
-func (Noop) Delete(context.Context, string) error { return nil }
+func (Noop) Create(context.Context, Spec) error     { return nil }
+func (Noop) Delete(context.Context, string) error   { return nil }
+func (Noop) List(context.Context) ([]string, error) { return nil, nil }
 
 // K8s provisions sandboxes on a real cluster, into Namespace (its own).
 type K8s struct {
@@ -390,6 +395,39 @@ func (k *K8s) Create(ctx context.Context, spec Spec) error {
 		return fmt.Errorf("create pod: %w", err)
 	}
 	return nil
+}
+
+// List reports every session with resources still in the namespace, whether
+// or not the control plane remembers it. Both object kinds are consulted:
+// a half-finished delete can leave a NetworkPolicy behind, and a policy with
+// no pod is still litter someone has to clean up by hand.
+func (k *K8s) List(ctx context.Context) ([]string, error) {
+	opts := metav1.ListOptions{LabelSelector: labelSession}
+	seen := map[string]bool{}
+
+	pods, err := k.Client.CoreV1().Pods(k.Namespace).List(ctx, opts)
+	if err != nil {
+		return nil, fmt.Errorf("list sandbox pods: %w", err)
+	}
+	for _, p := range pods.Items {
+		seen[p.Labels[labelSession]] = true
+	}
+	policies, err := k.Client.NetworkingV1().NetworkPolicies(k.Namespace).List(ctx, opts)
+	if err != nil {
+		return nil, fmt.Errorf("list sandbox networkpolicies: %w", err)
+	}
+	for _, np := range policies.Items {
+		seen[np.Labels[labelSession]] = true
+	}
+
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		if id != "" {
+			out = append(out, id)
+		}
+	}
+	slices.Sort(out) // deterministic, so logs and tests read the same twice
+	return out, nil
 }
 
 // Delete removes the session's pod and policy. Deleting a namespace used to

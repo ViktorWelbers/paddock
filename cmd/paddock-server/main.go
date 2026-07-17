@@ -107,6 +107,16 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Before serving, not after: once requests are in flight, a session with
+	// no pod yet is indistinguishable from a session whose pod is gone.
+	// A cluster we cannot read is not a reason to refuse to start — the
+	// drift is already there and staying down does not fix it.
+	reconcileCtx, cancelReconcile := context.WithTimeout(ctx, 2*time.Minute)
+	if err := h.Reconcile(reconcileCtx); err != nil {
+		log.Printf("reconcile sandboxes: %v", err)
+	}
+	cancelReconcile()
+
 	srv := &http.Server{Addr: *addr, Handler: h.Routes()}
 	go func() {
 		log.Printf("paddock-server listening on %s", *addr)

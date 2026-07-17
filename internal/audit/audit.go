@@ -25,6 +25,10 @@ const (
 	KindEgressClosed    = "egress.closed"
 	KindWorkspacePush   = "workspace.push"
 	KindWorkspacePull   = "workspace.pull"
+	// Reconciliation: a sandbox no session owned was destroyed, or a session
+	// whose sandbox had vanished was marked failed.
+	KindSandboxReaped   = "sandbox.reaped"
+	KindSessionOrphaned = "session.orphaned"
 )
 
 type Event struct {
