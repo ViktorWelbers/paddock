@@ -135,7 +135,7 @@ func (m *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad upstream URL", http.StatusBadGateway)
 		return
 	}
-	_ = m.Audit.Append(audit.Event{
+	m.Audit.Record(audit.Event{
 		SessionID: sessionID, Actor: user, Kind: audit.KindMCPCall,
 		Payload: map[string]any{"server": name, "path": r.URL.Path},
 	})
@@ -154,7 +154,7 @@ func (m *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Mux) deny(w http.ResponseWriter, sessionID, user, server, reason string) {
-	_ = m.Audit.Append(audit.Event{
+	m.Audit.Record(audit.Event{
 		SessionID: sessionID, Actor: user, Kind: audit.KindPolicyDenied,
 		Payload: map[string]any{"server": server, "reason": reason},
 	})

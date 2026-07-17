@@ -74,7 +74,7 @@ func (h *Handler) pushWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sum := counter.sum()
-	_ = h.Audit.Append(audit.Event{
+	h.Audit.Record(audit.Event{
 		SessionID: sess.ID, Actor: sess.User, Kind: audit.KindWorkspacePush,
 		Payload: map[string]any{"bytes": counter.n, "sha256": sum, "clean": r.URL.Query().Get("clean") == "1"},
 	})
@@ -105,13 +105,13 @@ func (h *Handler) pullWorkspace(w http.ResponseWriter, r *http.Request) {
 		// The header is already written by now if any bytes flowed, so
 		// there's no status left to set — the truncated body and the audit
 		// event are what the client has to go on.
-		_ = h.Audit.Append(audit.Event{
+		h.Audit.Record(audit.Event{
 			SessionID: sess.ID, Actor: sess.User, Kind: audit.KindWorkspacePull,
 			Payload: map[string]any{"bytes": counter.n, "error": err.Error()},
 		})
 		return
 	}
-	_ = h.Audit.Append(audit.Event{
+	h.Audit.Record(audit.Event{
 		SessionID: sess.ID, Actor: sess.User, Kind: audit.KindWorkspacePull,
 		Payload: map[string]any{"bytes": counter.n, "sha256": counter.sum()},
 	})

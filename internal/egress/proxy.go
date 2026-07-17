@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -179,6 +180,26 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	defer upstream.Close()
 
+	// Record the allow before a single byte can move, and refuse if it
+	// cannot be recorded. An unaudited tunnel is precisely the thing this
+	// proxy exists to make impossible — a session moving bytes to the
+	// internet with no trail is indistinguishable from exfiltration, so
+	// paddock declines to be the one providing it. This is the same
+	// fail-closed stance the policy engine already takes, applied to the
+	// evidence rather than the decision.
+	//
+	// It has to happen here, before the hijack: afterwards the connection
+	// belongs to the tunnel and there is no ResponseWriter left to say no
+	// with.
+	if err := p.Audit.Append(audit.Event{
+		SessionID: sess.ID, Actor: sess.User, Kind: audit.KindEgressAllowed,
+		Payload: map[string]any{"host": host, "port": port, "groups": groups, "scheme": "connect"},
+	}); err != nil {
+		slog.Error("egress denied: the allow could not be audited", "error", err, "session", sess.ID, "host", host)
+		p.denyForbidden(w, sess, host, port, "audit_unavailable")
+		return
+	}
+
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "proxy requires a hijackable connection", http.StatusInternalServerError)
@@ -199,14 +220,9 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	// The tunnel manages its own idle deadlines from here.
 	_ = client.SetDeadline(time.Time{})
 
-	_ = p.Audit.Append(audit.Event{
-		SessionID: sess.ID, Actor: sess.User, Kind: audit.KindEgressAllowed,
-		Payload: map[string]any{"host": host, "port": port, "groups": groups, "scheme": "connect"},
-	})
-
 	sent, received := p.tunnel(client, bufrw, upstream)
 
-	_ = p.Audit.Append(audit.Event{
+	p.Audit.Record(audit.Event{
 		SessionID: sess.ID, Actor: sess.User, Kind: audit.KindEgressClosed,
 		Payload: map[string]any{
 			"host": host, "port": port,
@@ -313,10 +329,16 @@ func (p *Proxy) handlePlainHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	_ = p.Audit.Append(audit.Event{
+	// As with CONNECT: no record, no relay. Nothing has been written to the
+	// client yet, so refusing is still possible.
+	if err := p.Audit.Append(audit.Event{
 		SessionID: sess.ID, Actor: sess.User, Kind: audit.KindEgressAllowed,
 		Payload: map[string]any{"host": host, "port": port, "groups": groups, "scheme": "http", "url": r.URL.String()},
-	})
+	}); err != nil {
+		slog.Error("egress denied: the allow could not be audited", "error", err, "session", sess.ID, "host", host)
+		p.denyForbidden(w, sess, host, port, "audit_unavailable")
+		return
+	}
 
 	for k, vs := range resp.Header {
 		for _, v := range vs {
@@ -326,7 +348,7 @@ func (p *Proxy) handlePlainHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 	n, _ := io.Copy(w, resp.Body)
 
-	_ = p.Audit.Append(audit.Event{
+	p.Audit.Record(audit.Event{
 		SessionID: sess.ID, Actor: sess.User, Kind: audit.KindEgressClosed,
 		Payload: map[string]any{"host": host, "port": port, "bytes_received": n},
 	})
@@ -385,7 +407,7 @@ func isPrivate(a netip.Addr) bool {
 var cgnat = netip.MustParsePrefix("100.64.0.0/10")
 
 func (p *Proxy) denyUnauthenticated(w http.ResponseWriter, host string, port int) {
-	_ = p.Audit.Append(audit.Event{
+	p.Audit.Record(audit.Event{
 		Actor: "unknown", Kind: audit.KindEgressDenied,
 		Payload: map[string]any{"host": host, "port": port, "reason": "unauthenticated"},
 	})
@@ -394,7 +416,7 @@ func (p *Proxy) denyUnauthenticated(w http.ResponseWriter, host string, port int
 }
 
 func (p *Proxy) denyForbidden(w http.ResponseWriter, sess Session, host string, port int, reason string) {
-	_ = p.Audit.Append(audit.Event{
+	p.Audit.Record(audit.Event{
 		SessionID: sess.ID, Actor: orUnknown(sess.User), Kind: audit.KindEgressDenied,
 		Payload: map[string]any{"host": host, "port": port, "reason": reason},
 	})

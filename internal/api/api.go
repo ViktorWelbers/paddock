@@ -253,7 +253,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "provision sandbox: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	_ = h.Audit.Append(audit.Event{
+	h.Audit.Record(audit.Event{
 		SessionID: sess.ID, Actor: sess.User, Kind: audit.KindSessionCreated,
 		Payload: map[string]any{"agent": sess.Agent, "budget_id": sess.BudgetID},
 	})
@@ -307,7 +307,7 @@ func (h *Handler) deleteSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_ = h.Audit.Append(audit.Event{
+	h.Audit.Record(audit.Event{
 		SessionID: id, Actor: sess.User, Kind: audit.KindSessionDeleted,
 	})
 	w.WriteHeader(http.StatusNoContent)

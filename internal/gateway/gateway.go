@@ -58,7 +58,7 @@ func (b Backends) authorize(w http.ResponseWriter, r *http.Request) (api.Session
 		return api.Session{}, false
 	}
 	if remaining <= 0 {
-		_ = b.Audit.Append(audit.Event{
+		b.Audit.Record(audit.Event{
 			SessionID: sess.ID, Actor: sess.User, Kind: audit.KindBudgetExhausted,
 			Payload: map[string]any{"budget_id": sess.BudgetID},
 		})
@@ -144,18 +144,18 @@ func (b Backends) settle(sess api.Session, u Usage) {
 		"output_tokens": u.OutputTokens,
 		"cost_usd":      res.CostUSD,
 	}
-	_ = b.Audit.Append(audit.Event{
+	b.Audit.Record(audit.Event{
 		SessionID: sess.ID, Actor: sess.User, Kind: audit.KindModelCall, Payload: payload,
 	})
 	if res.Exceeded {
 		// The response already went through (post-paid); the hard stop
 		// lands on the session's next call. Record the breach.
-		_ = b.Audit.Append(audit.Event{
+		b.Audit.Record(audit.Event{
 			SessionID: sess.ID, Actor: sess.User, Kind: audit.KindBudgetExhausted, Payload: payload,
 		})
 	}
 	for _, warn := range res.Warnings {
-		_ = b.Audit.Append(audit.Event{
+		b.Audit.Record(audit.Event{
 			SessionID: sess.ID, Actor: sess.User, Kind: audit.KindBudgetWarn,
 			Payload: map[string]any{"warning": warn},
 		})

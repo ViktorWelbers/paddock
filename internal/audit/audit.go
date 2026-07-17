@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -69,6 +70,23 @@ func (s *Store) Append(e Event) error {
 		e.TS.Format(time.RFC3339Nano), e.SessionID, e.Actor, e.Kind, string(payload),
 	)
 	return err
+}
+
+// Record appends an event that has already happened and cannot be taken
+// back — a model call that was relayed, a tunnel that has closed. The
+// caller has no decision left to make, so the error is not returned; it is
+// logged loudly instead.
+//
+// This exists because the alternative was `_ = Append(...)` at seventeen
+// call sites, which is how a compliance product ends up quietly missing
+// evidence: the events paddock exists to produce were the only ones nobody
+// checked. Anything that *can* still refuse should call Append and refuse —
+// see the egress proxy, which will not open a tunnel it cannot record.
+func (s *Store) Record(e Event) {
+	if err := s.Append(e); err != nil {
+		slog.Error("audit event lost",
+			"error", err, "kind", e.Kind, "session", e.SessionID, "actor", e.Actor)
+	}
 }
 
 // BySession returns a session's events in insertion order.

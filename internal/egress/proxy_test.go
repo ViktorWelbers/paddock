@@ -36,6 +36,12 @@ func allowAll(context.Context, policy.Input) (policy.Decision, error) {
 
 func newAudit(t *testing.T) *audit.Store {
 	t.Helper()
+	st, _ := newAuditDB(t)
+	return st
+}
+
+func newAuditDB(t *testing.T) (*audit.Store, *sql.DB) {
+	t.Helper()
 	// Same DSN the server and gateway use: the proxy appends audit rows from
 	// its tunnel goroutines while the test reads them back, and without WAL
 	// and a busy timeout that contention is SQLITE_BUSY rather than a wait.
@@ -48,7 +54,7 @@ func newAudit(t *testing.T) *audit.Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return st
+	return st, db
 }
 
 // newProxyTo builds a proxy whose allowlist maps "registry.test" to the given
@@ -164,6 +170,50 @@ func TestConnectTunnelAllowed(t *testing.T) {
 				t.Errorf("bytes_received = %v, want > 0", e.Payload["bytes_received"])
 			}
 		}
+	}
+}
+
+// The audit trail is the product: a tunnel paddock cannot record is a
+// session moving bytes to the internet with no evidence, which is
+// indistinguishable from the exfiltration this proxy exists to catch. So an
+// allowlisted, policy-approved request still fails when the audit store is
+// unavailable.
+func TestConnectDeniedWhenAuditUnavailable(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("upstream was reached: bytes moved without an audit record")
+	}))
+	defer upstream.Close()
+	uurl, _ := url.Parse(upstream.URL)
+	port := mustPort(t, uurl.Port())
+
+	aud, db := newAuditDB(t)
+	al, err := normalize(&Allowlist{
+		Groups:       map[string][]string{"test": {"registry.test"}},
+		AllowedPorts: []int{port},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &Proxy{
+		Auth:          func(string) (Session, error) { return Session{ID: "s1", User: "viktor"}, nil },
+		Policy:        allowAll,
+		Audit:         aud,
+		Allowlist:     al,
+		Resolver:      stubResolver{"registry.test": {netip.MustParseAddr("127.0.0.1")}},
+		allowLoopback: true,
+	}
+	srv := httptest.NewServer(p)
+	defer srv.Close()
+
+	// Break the audit store the way an outage would: the store is still
+	// there, the writes just fail.
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	client := clientVia(srv.URL, "good-token")
+	if _, err := client.Get("https://registry.test:" + uurl.Port() + "/"); err == nil {
+		t.Fatal("expected the tunnel to be refused when the allow cannot be audited")
 	}
 }
 
