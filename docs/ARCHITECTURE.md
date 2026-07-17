@@ -118,6 +118,20 @@ Append-only `events` table: `ts, session_id, actor, kind, payload(JSON)`. Kinds:
 
 OSS: everything above. Enterprise: SSO/SAML (auth middleware), chargeback exporters, report-pack generators (DORA/AI-Act templates over the audit store), signed audit log, vetted-MCP registry feed (external data service the gateway can subscribe to). The boundary is additive modules, not forked internals.
 
+## Who is calling
+
+Two different populations reach paddock, and they authenticate differently because they are asking different questions.
+
+**Sandboxes** present a session token (`internal/api.Store.ByToken`). It is minted per session, injected as the agent's API key, and it is all the gateway needs: the session identifies the budget to debit, the policy input, and the audit subject. A sandbox can only reach the gateway's ports, so it never touches the control-plane API at all.
+
+**Humans and CI** present a bearer token to the control-plane API (`internal/auth`). The identity behind it — never the request body — is what owns a session. This matters more than a login screen usually does: paddock's product is the sentence "this user ran this agent, which spent this much and connected here", and every noun in it comes from the authenticated caller.
+
+- `auth.existingSecret` — a Secret holding `tokens.json`: a token, a subject, and optional groups per human. Tokens are compared by digest.
+- `auth.disabled: true` — no authentication. Correct on a laptop, and it must be asked for by name; the server logs the posture on every start.
+- Membership of `paddock-admin` sees and acts on everyone's sessions. Everyone else gets their own — and a **404**, not a 403, for anyone else's, because a 403 confirms that a session id exists.
+
+OIDC is the next step and slots in behind the same `auth.Authenticator` interface: it only changes how a request becomes an `Identity`.
+
 ## Isolation roadmap
 
 MVP: pods + a port-scoped NetworkPolicy + container limits + no mounted secrets + no service-account token (threat model: careless/compromised agent, not hostile kernel exploits). Next: optional `runtimeClassName: gvisor`, then Kata/microVMs for customers who demand hardware isolation. The pod spec is rendered in one place (`internal/sandbox`), so isolation upgrades are config, not rearchitecture.

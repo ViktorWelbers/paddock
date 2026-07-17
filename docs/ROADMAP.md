@@ -42,15 +42,16 @@ operator. Both assumptions have to go before anyone else can run it.
 **Next up, in order.** The first two are what a stranger hits within an hour
 of installing.
 
-- [ ] **Server API authentication.** Every route is unauthenticated today, which
-      is why the honest advice is "keep it cluster-internal or behind ingress
-      auth". `GET /v1/sessions/{id}/workspace` makes that worse: it hands a
-      session's files to anyone who can reach the API. Sandboxes are already
-      fenced off (the netpol is port-scoped), so this is about humans on the
-      network. Wanted: OIDC bearer tokens, `user` taken from the token rather
-      than the client's claim, and sessions owned by the user who created them.
-      Note the shape of the gap: paddock's whole claim is *who did what*, and
-      `user` is currently a string the client makes up.
+- [x] **Server API authentication** — bearer tokens from a Secret, the session
+      owner taken from the credential instead of the request body, and
+      ownership enforced on every route (`paddock-admin` sees everything;
+      everyone else gets a 404 for someone else's session, not a 403). Running
+      open is still possible and now has to be asked for by name.
+- [ ] **OIDC.** Tokens in a Secret are a file an operator edits; an enterprise
+      wants its IdP to decide who exists, and groups to arrive in the token
+      rather than in the file. `auth.Authenticator` is the seam — an OIDC
+      implementation changes only how a request becomes an `Identity` — plus a
+      device-code login in the CLI so a developer never handles a raw token.
 - [ ] **Server-side attach relay (websocket).** `paddock attach` is the last
       thing that talks to the Kubernetes API from the developer's machine: it
       needs a kubeconfig pointing at the right cluster, `pods/exec` rights the

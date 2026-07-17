@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/viktorwelbers/paddock/internal/audit"
+	"github.com/viktorwelbers/paddock/internal/auth"
 	"github.com/viktorwelbers/paddock/internal/budget"
 	"github.com/viktorwelbers/paddock/internal/sandbox"
 )
@@ -158,8 +159,52 @@ type Handler struct {
 	Provisioner sandbox.Provisioner
 	// Exec streams workspaces in and out of sandboxes. Nil (no cluster)
 	// makes the workspace endpoints report 501 rather than fail obscurely.
-	Exec   sandbox.Execer
+	Exec sandbox.Execer
+	// Auth establishes who is calling. Nil means every caller is anonymous
+	// and omnipotent, which is only correct on a laptop — Routes refuses to
+	// leave it implicit and cmd/paddock-server names the choice.
+	Auth   auth.Authenticator
 	Config Config
+}
+
+// publicPaths need no identity: a health check has none to give, and the
+// dashboard is markup — its data arrives through the authenticated API.
+var publicPaths = []string{"/healthz", "/"}
+
+// Handler returns the fully wired HTTP handler: routes behind the
+// authentication middleware.
+func (h *Handler) Handler() http.Handler {
+	a := h.Auth
+	if a == nil {
+		a = auth.Anonymous{}
+	}
+	return auth.Middleware(a, publicPaths, h.Routes())
+}
+
+// caller is the authenticated identity for this request. Requests always
+// pass through the middleware, so a missing identity is a wiring bug — fail
+// closed rather than invent an anonymous one.
+func caller(r *http.Request) (auth.Identity, bool) {
+	return auth.FromContext(r.Context())
+}
+
+// mayAccess reports whether the caller owns this session (or is an admin),
+// having already written the response if not.
+//
+// The refusal is a 404, not a 403: a 403 would confirm that a session id
+// exists and belongs to someone else, and session ids are the only thing
+// standing between a curious colleague and another team's workspace.
+func (h *Handler) mayAccess(w http.ResponseWriter, r *http.Request, sess Session) bool {
+	id, ok := caller(r)
+	if !ok {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return false
+	}
+	if sess.User == id.Subject || id.IsAdmin() {
+		return true
+	}
+	http.NotFound(w, r)
+	return false
 }
 
 // dashboardHTML is the read-only web dashboard (sessions, budgets, audit
@@ -196,7 +241,15 @@ func randomID(bytes int) string {
 }
 
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
+	id, ok := caller(r)
+	if !ok {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
 	var req struct {
+		// User is accepted and ignored: it is what older clients sent, and
+		// honouring it would let anyone create a session — and spend a
+		// budget — under someone else's name. The owner is the caller.
 		User     string `json:"user"`
 		Agent    string `json:"agent"`
 		BudgetID string `json:"budget_id"`
@@ -205,8 +258,8 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
-	if req.User == "" || req.Agent == "" || req.BudgetID == "" {
-		http.Error(w, "user, agent and budget_id are required", http.StatusBadRequest)
+	if req.Agent == "" || req.BudgetID == "" {
+		http.Error(w, "agent and budget_id are required", http.StatusBadRequest)
 		return
 	}
 	image := h.Config.imageFor(req.Agent)
@@ -231,7 +284,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 
 	sess := Session{
 		ID:        randomID(6),
-		User:      req.User,
+		User:      id.Subject,
 		Agent:     req.Agent,
 		BudgetID:  req.BudgetID,
 		Token:     "pdk_" + randomID(24),
@@ -268,17 +321,25 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, h.Config.locate(sess))
 }
 
-func (h *Handler) listSessions(w http.ResponseWriter, _ *http.Request) {
-	sessions, err := h.Sessions.list()
+func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
+	id, ok := caller(r)
+	if !ok {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	all, err := h.Sessions.list()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if sessions == nil {
-		sessions = []Session{}
-	}
-	for i, s := range sessions {
-		sessions[i] = h.Config.locate(s)
+	sessions := []Session{}
+	for _, s := range all {
+		// `paddock ls` is a developer's view of their own work; an admin
+		// gets the whole cluster.
+		if s.User != id.Subject && !id.IsAdmin() {
+			continue
+		}
+		sessions = append(sessions, h.Config.locate(s))
 	}
 	writeJSON(w, http.StatusOK, sessions)
 }
@@ -293,6 +354,9 @@ func (h *Handler) getSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if !h.mayAccess(w, r, sess) {
+		return
+	}
 	writeJSON(w, http.StatusOK, h.Config.locate(sess))
 }
 
@@ -305,6 +369,9 @@ func (h *Handler) deleteSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !h.mayAccess(w, r, sess) {
 		return
 	}
 	if err := h.Provisioner.Delete(r.Context(), id); err != nil {
@@ -322,7 +389,21 @@ func (h *Handler) deleteSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) sessionEvents(w http.ResponseWriter, r *http.Request) {
-	events, err := h.Audit.BySession(r.PathValue("id"))
+	// The events are the session's story — what it spent, where it
+	// connected, what it was refused. Same owner check as the session.
+	sess, err := h.Sessions.get(r.PathValue("id"))
+	if errors.Is(err, sql.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !h.mayAccess(w, r, sess) {
+		return
+	}
+	events, err := h.Audit.BySession(sess.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

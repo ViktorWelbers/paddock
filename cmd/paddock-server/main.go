@@ -24,6 +24,7 @@ import (
 
 	"github.com/viktorwelbers/paddock/internal/api"
 	"github.com/viktorwelbers/paddock/internal/audit"
+	"github.com/viktorwelbers/paddock/internal/auth"
 	"github.com/viktorwelbers/paddock/internal/budget"
 	"github.com/viktorwelbers/paddock/internal/sandbox"
 )
@@ -45,6 +46,8 @@ func main() {
 	kubeconfig := flag.String("kubeconfig", "", "kubeconfig path; empty = in-cluster config if available, else no-op provisioner")
 	namespace := flag.String("sandbox-namespace", "", "namespace sandboxes run in (empty = this pod's own, which is what the chart's Role grants; only set this if you bound the provisioner Role elsewhere)")
 	seedBudgetUSD := flag.Float64("seed-budget-usd", 25, "create a 'default' budget with this limit if none exists (dev convenience, 0 disables)")
+	authTokens := flag.String("auth-tokens", "", "JSON file of bearer tokens identifying API callers")
+	authDisabled := flag.Bool("auth-disabled", false, "serve the API with no authentication at all — every caller owns every session (laptops and CI only)")
 	flag.Parse()
 
 	// WAL + busy_timeout: the gateway writes from another process sharing
@@ -76,6 +79,7 @@ func main() {
 		}
 	}
 
+	authenticator := newAuthenticator(*authTokens, *authDisabled)
 	ns := sandboxNamespace(*namespace)
 	provisioner := newProvisioner(*kubeconfig, ns)
 	// Only a real cluster can stream workspaces; the no-op provisioner leaves
@@ -87,6 +91,7 @@ func main() {
 		Audit:       auditStore,
 		Provisioner: provisioner,
 		Exec:        execer,
+		Auth:        authenticator,
 		Config: api.Config{
 			Namespace:      ns,
 			AgentImages:    agentImageMap(*agentImage, *agentImages),
@@ -117,7 +122,7 @@ func main() {
 	}
 	cancelReconcile()
 
-	srv := &http.Server{Addr: *addr, Handler: h.Routes()}
+	srv := &http.Server{Addr: *addr, Handler: h.Handler()}
 	go func() {
 		log.Printf("paddock-server listening on %s", *addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -135,6 +140,34 @@ func main() {
 	if err := db.Close(); err != nil {
 		log.Printf("close db: %v", err)
 	}
+}
+
+// newAuthenticator picks how callers are identified. There is no default:
+// paddock's whole claim is that it can say who did what, and a server that
+// quietly accepts anyone cannot. Running without authentication stays
+// possible — a laptop has no IdP and needs none — but it has to be asked
+// for by name, and the server says so on every start.
+func newAuthenticator(tokenFile string, disabled bool) auth.Authenticator {
+	switch {
+	case tokenFile != "" && disabled:
+		log.Fatal("--auth-tokens and --auth-disabled contradict each other; pick one")
+	case tokenFile != "":
+		tokens, err := auth.LoadTokens(tokenFile)
+		if err != nil {
+			// Fatal: an operator who asked for auth and got a typo'd path
+			// must not be handed an open server as the consolation prize.
+			log.Fatalf("load auth tokens: %v", err)
+		}
+		log.Printf("API authentication: %s", tokens.Describe())
+		return tokens
+	case disabled:
+		a := auth.Anonymous{As: "anonymous"}
+		log.Printf("API authentication: %s", a.Describe())
+		return a
+	}
+	log.Fatal("no API authentication configured: pass --auth-tokens <file>, " +
+		"or --auth-disabled to serve the API to anyone who can reach it")
+	return nil
 }
 
 // parseJSONFlag decodes a flag whose value is a JSON document — node

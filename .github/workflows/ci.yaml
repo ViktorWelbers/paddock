@@ -26,10 +26,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
       - run: helm lint deploy/helm/paddock
-      - run: helm template paddock deploy/helm/paddock > /dev/null
+      - run: helm template paddock deploy/helm/paddock --set auth.disabled=true > /dev/null
       # Exercise the conditional blocks: pi agent, openai upstream, ingress, PVC.
       - run: >
           helm template paddock deploy/helm/paddock
+          --set auth.existingSecret=paddock-api-tokens
           --set agentImagePi=example/agent-pi:ci
           --set gateway.openai.upstream=http://models.svc
           --set gateway.openai.model=example/model
@@ -40,6 +41,7 @@ jobs:
       - name: renders without an Anthropic key
         run: >
           helm template paddock deploy/helm/paddock
+          --set auth.disabled=true
           --set gateway.existingSecret=
           --set agentImagePi=example/agent-pi:ci
           --set gateway.openai.upstream=http://models.svc
@@ -47,8 +49,15 @@ jobs:
       # ...and an install with no model upstream at all must fail loudly.
       - name: refuses an install with no model upstream
         run: |
-          if helm template paddock deploy/helm/paddock --set gateway.existingSecret= >/dev/null 2>&1; then
+          if helm template paddock deploy/helm/paddock --set auth.disabled=true --set gateway.existingSecret= >/dev/null 2>&1; then
             echo "expected the chart to reject a gateway with no model upstream"
+            exit 1
+          fi
+      # Authentication is a decision the operator has to make out loud.
+      - name: refuses an install that never chose an auth mode
+        run: |
+          if helm template paddock deploy/helm/paddock >/dev/null 2>&1; then
+            echo "expected the chart to reject an install with no auth configured"
             exit 1
           fi
 

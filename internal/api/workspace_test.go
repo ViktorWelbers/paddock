@@ -14,6 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/viktorwelbers/paddock/internal/audit"
+	"github.com/viktorwelbers/paddock/internal/auth"
 )
 
 // fakeExecer records what the handler asked the sandbox to run, and plays
@@ -56,7 +57,10 @@ func newTestHandler(t *testing.T, exec *fakeExecer) *Handler {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &Handler{Sessions: sessions, Audit: aud, Config: Config{Namespace: "paddock"}}
+	// The caller is the session's owner; ownership itself is covered in
+	// auth_test.go.
+	h := &Handler{Sessions: sessions, Audit: aud, Config: Config{Namespace: "paddock"},
+		Auth: auth.Anonymous{As: "viktor"}}
 	if exec != nil {
 		h.Exec = exec
 	}
@@ -75,7 +79,7 @@ func TestPushWorkspaceStreamsTarIntoSandbox(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/v1/sessions/s1/workspace", strings.NewReader("tar-bytes"))
 	w := httptest.NewRecorder()
-	h.Routes().ServeHTTP(w, req)
+	h.Handler().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body)
@@ -103,7 +107,7 @@ func TestPushWorkspaceCleanDeletesFirst(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/v1/sessions/s1/workspace?clean=1", strings.NewReader("x"))
 	w := httptest.NewRecorder()
-	h.Routes().ServeHTTP(w, req)
+	h.Handler().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body)
@@ -122,7 +126,7 @@ func TestPullWorkspaceStreamsTarOut(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/v1/sessions/s1/workspace", nil)
 	w := httptest.NewRecorder()
-	h.Routes().ServeHTTP(w, req)
+	h.Handler().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
@@ -142,7 +146,7 @@ func TestPullWorkspaceStreamsTarOut(t *testing.T) {
 func TestWorkspaceWithoutClusterIsNotImplemented(t *testing.T) {
 	h := newTestHandler(t, nil)
 	w := httptest.NewRecorder()
-	h.Routes().ServeHTTP(w, httptest.NewRequest("GET", "/v1/sessions/s1/workspace", nil))
+	h.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/v1/sessions/s1/workspace", nil))
 	if w.Code != http.StatusNotImplemented {
 		t.Errorf("status = %d, want 501", w.Code)
 	}
@@ -151,7 +155,7 @@ func TestWorkspaceWithoutClusterIsNotImplemented(t *testing.T) {
 func TestWorkspaceUnknownSessionIs404(t *testing.T) {
 	h := newTestHandler(t, &fakeExecer{})
 	w := httptest.NewRecorder()
-	h.Routes().ServeHTTP(w, httptest.NewRequest("GET", "/v1/sessions/nope/workspace", nil))
+	h.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/v1/sessions/nope/workspace", nil))
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", w.Code)
 	}

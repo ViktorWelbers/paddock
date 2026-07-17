@@ -129,7 +129,13 @@ func (h *Handler) workspaceSession(w http.ResponseWriter, r *http.Request) (Sess
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return Session{}, nil, false
 	}
-	if sess.Status != "running" {
+	// Both directions go through here, which is what makes this the place
+	// the check belongs: GET hands over every file in someone's sandbox, and
+	// POST overwrites them.
+	if !h.mayAccess(w, r, sess) {
+		return Session{}, nil, false
+	}
+	if sess.Status != statusRunning {
 		http.Error(w, fmt.Sprintf("session is %s", sess.Status), http.StatusConflict)
 		return Session{}, nil, false
 	}

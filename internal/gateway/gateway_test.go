@@ -59,7 +59,7 @@ func newBackends(t *testing.T, limitUSD float64) (Backends, api.Session) {
 		Provisioner: sandbox.Noop{}, Config: api.Config{
 			AgentImages: map[string]string{"claude": "img"}, GatewayURL: "http://gw"}}
 	rec := httptest.NewRecorder()
-	h.Routes().ServeHTTP(rec, httptest.NewRequest("POST", "/v1/sessions",
+	h.Handler().ServeHTTP(rec, httptest.NewRequest("POST", "/v1/sessions",
 		strings.NewReader(`{"user":"viktor","agent":"claude","budget_id":"b1"}`)))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create session: %d %s", rec.Code, rec.Body.String())

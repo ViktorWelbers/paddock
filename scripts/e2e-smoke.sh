@@ -31,7 +31,7 @@ curl -sf "$SERVER/healthz" >/dev/null || fail "server /healthz unreachable via p
 
 step "create session"
 RESP=$(curl -sf -X POST "$SERVER/v1/sessions" -H 'content-type: application/json' \
-  -d '{"user":"e2e","agent":"claude","budget_id":"default"}')
+  -d '{"agent":"claude","budget_id":"default"}')
 SID=$(echo "$RESP" | json "['id']")
 echo "session: $SID"
 # The server reports where the sandbox landed; sessions share its namespace.

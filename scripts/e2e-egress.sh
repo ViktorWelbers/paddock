@@ -30,7 +30,7 @@ curl -sf "$SERVER/healthz" >/dev/null || fail "server /healthz unreachable via p
 
 step "create session"
 RESP=$(curl -sf -X POST "$SERVER/v1/sessions" -H 'content-type: application/json' \
-  -d '{"user":"e2e","agent":"claude","budget_id":"default"}')
+  -d '{"agent":"claude","budget_id":"default"}')
 SID=$(echo "$RESP" | json "['id']")
 NS=$(echo "$RESP" | json "['namespace']")
 POD=$(echo "$RESP" | json "['pod']")

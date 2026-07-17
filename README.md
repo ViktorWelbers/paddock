@@ -71,6 +71,7 @@ Developers on a team with a running deployment don't need the repo at all:
 ```sh
 go install github.com/viktorwelbers/paddock/cmd/paddock@latest
 paddock config set server https://paddock.internal   # your deployment's URL, once
+paddock config set token pdk-...                     # your token, from your platform team
 paddock run claude
 ```
 
@@ -79,7 +80,8 @@ server behind an ingress (e.g. `https://paddock.internal`) and developers save
 it with `paddock config set server https://paddock.internal`. `PADDOCK_SERVER`
 overrides the saved value per shell (CI, one-offs), and with neither set the
 CLI falls back to `localhost:8080`, where the k3d dev loop maps the cluster
-ingress. That's the whole story: no port-forwards, no kubeconfig magic. Inside
+ingress. The token works the same way (`PADDOCK_TOKEN` overrides it), and the
+k3d loop installs with authentication off, so there is nothing to save there. That's the whole story: no port-forwards, no kubeconfig magic. Inside
 the sandbox, the agent's only route out is the Paddock gateway: no cluster API,
 no real keys, and no internet beyond the domains you allow.
 
@@ -249,18 +251,42 @@ kubectl create namespace paddock
 kubectl -n paddock create secret generic paddock-anthropic \
   --from-literal=ANTHROPIC_API_KEY=sk-ant-...
 
-# 3. Install
+# 3. Who may call the API. A subject owns the sessions it creates;
+#    paddock-admin sees everyone's.
+cat > tokens.json <<'JSON'
+{"users": [
+  {"token": "pdk-viktor-<random>", "subject": "viktor"},
+  {"token": "pdk-ops-<random>", "subject": "ops", "groups": ["paddock-admin"]}
+]}
+JSON
+kubectl -n paddock create secret generic paddock-api-tokens --from-file=tokens.json
+
+# 4. Recommended: hold paddock to the standard it asks of agents
+kubectl label namespace paddock \
+  pod-security.kubernetes.io/enforce=restricted \
+  pod-security.kubernetes.io/enforce-version=latest
+
+# 5. Install
 helm upgrade --install paddock deploy/helm/paddock -n paddock \
   --set image.repository=<your-registry>/paddock/paddock \
   --set image.tag=<tag> \
-  --set agentImage=<your-registry>/paddock/agent-claude:<tag>
+  --set agentImage=<your-registry>/paddock/agent-claude:<tag> \
+  --set auth.existingSecret=paddock-api-tokens
 ```
+
+The chart will not install without an answer on authentication: either
+`auth.existingSecret`, or `auth.disabled=true` to serve the API to anyone who
+can reach it. Paddock exists to say who did what, so the choice is yours to
+make but not to skip.
 
 See `deploy/helm/paddock/values.yaml` for the full surface: ingress (put the
 server behind one; developers save the URL with `paddock config set server`),
-persistent SQLite,
+persistent SQLite, where agent workloads may run (`sandbox.nodeSelector`,
+`sandbox.tolerations`, `sandbox.runtimeClassName` for gVisor/Kata),
 an OpenAI-compatible upstream for pi (`gateway.openai.*`, including a
-`caConfigMap` for private CAs), and the server-side MCP registry. An ArgoCD
+`caConfigMap` for private CAs), and the server-side MCP registry. Serving only
+self-hosted models? Leave `gateway.existingSecret` empty and set
+`gateway.openai.upstream` — no Anthropic key required. An ArgoCD
 `Application` example lives in [`deploy/argocd/`](deploy/argocd). If your
 registry uses a self-signed CA, trust it in Docker before pushing.
 

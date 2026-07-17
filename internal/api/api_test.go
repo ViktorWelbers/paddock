@@ -45,7 +45,7 @@ func testHandler(t *testing.T, cfg Config) *Handler {
 func createSessionReq(t *testing.T, h *Handler, agent string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	h.Routes().ServeHTTP(rec, httptest.NewRequest("POST", "/v1/sessions",
+	h.Handler().ServeHTTP(rec, httptest.NewRequest("POST", "/v1/sessions",
 		strings.NewReader(`{"user":"viktor","agent":"`+agent+`","budget_id":"b1"}`)))
 	return rec
 }

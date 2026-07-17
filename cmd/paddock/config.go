@@ -16,6 +16,9 @@ import (
 // in place via dotfiles/MDM.
 type cliConfig struct {
 	Server string `json:"server,omitempty"`
+	// Token authenticates this developer to the control-plane API. The file
+	// is written 0600 — it is a credential, and the developer's own.
+	Token string `json:"token,omitempty"`
 }
 
 func configPath() (string, error) {
@@ -58,37 +61,49 @@ func configCmd() *cli.Command {
 		Name:  "config",
 		Usage: "show or save CLI settings",
 		Description: "With no arguments, prints the current settings and where they live.\n" +
-			"Saving the server URL once beats exporting PADDOCK_SERVER in every shell\n" +
-			"(the env var still wins when set).",
+			"Saving the server URL and token once beats exporting PADDOCK_SERVER and\n" +
+			"PADDOCK_TOKEN in every shell (the env vars still win when set).\n\n" +
+			"Settings: server <url>, token <token>",
 		Action: func(_ context.Context, _ *cli.Command) error { return showConfig() },
 		Commands: []*cli.Command{
 			{
 				Name:      "set",
 				Usage:     "save a setting",
-				ArgsUsage: "server <url>",
+				ArgsUsage: "server <url> | token <token>",
 				Action: func(_ context.Context, c *cli.Command) error {
-					if c.Args().First() != "server" || c.Args().Get(1) == "" {
-						return cli.Exit("usage: paddock config set server <url>", 2)
+					key, value := c.Args().First(), c.Args().Get(1)
+					if value == "" {
+						return cli.Exit("usage: paddock config set (server <url>|token <token>)", 2)
 					}
 					cfg := loadConfig()
-					cfg.Server = c.Args().Get(1)
+					switch key {
+					case "server":
+						cfg.Server = value
+					case "token":
+						cfg.Token = value
+					default:
+						return cli.Exit("unknown setting "+key+" (want: server, token)", 2)
+					}
 					if err := saveConfig(cfg); err != nil {
 						return err
 					}
-					fmt.Println("server:", cfg.Server)
-					return nil
+					return showConfig()
 				},
 			},
 			{
 				Name:      "unset",
 				Usage:     "clear a setting",
-				ArgsUsage: "server",
+				ArgsUsage: "server | token",
 				Action: func(_ context.Context, c *cli.Command) error {
-					if c.Args().First() != "server" {
-						return cli.Exit("usage: paddock config unset server", 2)
-					}
 					cfg := loadConfig()
-					cfg.Server = ""
+					switch c.Args().First() {
+					case "server":
+						cfg.Server = ""
+					case "token":
+						cfg.Token = ""
+					default:
+						return cli.Exit("usage: paddock config unset (server|token)", 2)
+					}
 					return saveConfig(cfg)
 				},
 			},
@@ -100,10 +115,28 @@ func showConfig() error {
 	path, _ := configPath()
 	c := loadConfig()
 	fmt.Printf("config file: %s\n", path)
-	if c.Server == "" {
-		fmt.Println("server: (unset)")
-		return nil
-	}
-	fmt.Println("server:", c.Server)
+	fmt.Println("server:", orUnset(c.Server))
+	// Never the token itself: this prints in terminals, screen shares and
+	// bug reports.
+	fmt.Println("token:", orUnset(redact(c.Token)))
 	return nil
+}
+
+func orUnset(s string) string {
+	if s == "" {
+		return "(unset)"
+	}
+	return s
+}
+
+// redact keeps enough of a token to recognise which one is saved, and not
+// enough to use it.
+func redact(token string) string {
+	if token == "" {
+		return ""
+	}
+	if len(token) <= 8 {
+		return "********"
+	}
+	return token[:4] + "…" + token[len(token)-4:]
 }

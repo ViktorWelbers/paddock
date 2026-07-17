@@ -217,12 +217,18 @@ func argOr(v, fallback string) string {
 }
 
 func runSession(agent string, detach, push bool) error {
+	// No "user" field: the server takes the owner from the credential, so
+	// claiming one here would be decorative at best and a lie at worst.
 	body, _ := json.Marshal(map[string]string{
-		"user":      currentUser(),
 		"agent":     agent,
 		"budget_id": envOr("PADDOCK_BUDGET", "default"),
 	})
-	resp, err := http.Post(serverURL()+"/v1/sessions", "application/json", bytes.NewReader(body))
+	req, err := apiRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := apiDo(req)
 	if err != nil {
 		return err
 	}
@@ -279,8 +285,11 @@ func listSessions() error {
 }
 
 func deleteSession(id string) error {
-	req, _ := http.NewRequest(http.MethodDelete, serverURL()+"/v1/sessions/"+id, nil)
-	resp, err := http.DefaultClient.Do(req)
+	req, err := apiRequest(http.MethodDelete, "/v1/sessions/"+id, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := apiDo(req)
 	if err != nil {
 		return err
 	}
@@ -326,7 +335,7 @@ func showEvents(id string) error {
 }
 
 func getJSON(path string, v any) error {
-	resp, err := http.Get(serverURL() + path)
+	resp, err := apiGet(path)
 	if err != nil {
 		return err
 	}

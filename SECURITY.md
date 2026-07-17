@@ -22,15 +22,20 @@ rather than public issues. You should receive a response within a few days.
 
 Alpha software — not yet hardened for hostile multi-tenant use:
 
-- The server API has no authentication yet; deploy it behind your ingress
-  auth or keep it cluster-internal. `user` is whatever the client claims,
-  so the audit trail attributes actions rather than proves them.
+- API authentication is bearer tokens from a Secret. There is no OIDC yet, so
+  identities are managed by editing that file rather than by your IdP.
 - `paddock attach` uses the operator's kubeconfig (pods/exec RBAC).
 - Debits land post-response: a session can overshoot its budget by at most
   one model call by design.
 - Session tokens are stored in plaintext and do not expire.
 
 Deployment expectations, in case they help you place paddock in your cluster:
+
+- The API requires a bearer token identifying the caller (`auth.existingSecret`),
+  and a session belongs to whoever created it: other developers get a 404, not a
+  403. `auth.disabled=true` turns this off for laptops — the server says so on
+  every start. There is no third option; the chart refuses to install without a
+  choice.
 
 - Sandboxes and the control plane satisfy the `restricted` Pod Security
   Standard; label the namespace and Kubernetes will hold paddock to it (see

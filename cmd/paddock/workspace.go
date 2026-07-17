@@ -33,9 +33,9 @@ func pushWorkspace(sessionID, dir string, clean bool) error {
 		return fmt.Errorf("nothing to upload from %s", dir)
 	}
 
-	url := serverURL() + "/v1/sessions/" + sessionID + "/workspace"
+	endpoint := "/v1/sessions/" + sessionID + "/workspace"
 	if clean {
-		url += "?clean=1"
+		endpoint += "?clean=1"
 	}
 
 	pr, pw := io.Pipe()
@@ -43,12 +43,12 @@ func pushWorkspace(sessionID, dir string, clean bool) error {
 		pw.CloseWithError(writeTarGz(pw, dir, files))
 	}()
 
-	req, err := http.NewRequest("POST", url, pr)
+	req, err := apiRequest(http.MethodPost, endpoint, pr)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/gzip")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := apiDo(req)
 	if err != nil {
 		return fmt.Errorf("upload workspace: %w", err)
 	}
@@ -70,7 +70,7 @@ func pullWorkspace(sessionID, dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	resp, err := http.Get(serverURL() + "/v1/sessions/" + sessionID + "/workspace")
+	resp, err := apiGet("/v1/sessions/" + sessionID + "/workspace")
 	if err != nil {
 		return fmt.Errorf("download workspace: %w", err)
 	}

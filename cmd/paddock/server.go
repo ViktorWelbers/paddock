@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sync"
@@ -40,6 +41,57 @@ var serverURL = sync.OnceValue(func() string {
 	return ""
 })
 
+// apiToken resolves the developer's credential for the control-plane API,
+// the same way serverURL resolves the endpoint: env override first, then the
+// saved config. Empty is legitimate — a server started with --auth-disabled
+// wants no token — so the CLI sends what it has and lets the server judge.
+var apiToken = sync.OnceValue(func() string {
+	if v := os.Getenv("PADDOCK_TOKEN"); v != "" {
+		return v
+	}
+	return loadConfig().Token
+})
+
+// apiRequest builds a request to the control plane with the developer's
+// credential attached. Every call to the API goes through here — a call site
+// that forgets the header would not fail loudly, it would fail as a 401 the
+// developer cannot explain.
+func apiRequest(method, path string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequest(method, serverURL()+path, body)
+	if err != nil {
+		return nil, err
+	}
+	if t := apiToken(); t != "" {
+		req.Header.Set("Authorization", "Bearer "+t)
+	}
+	return req, nil
+}
+
+// apiDo sends an authenticated request and turns the two failures every
+// caller shares into sentences a developer can act on.
+func apiDo(req *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		return nil, fmt.Errorf("the paddock server rejected your credentials\n" +
+			"save your token once with: paddock config set token <token>\n" +
+			"(PADDOCK_TOKEN overrides it per shell)")
+	}
+	return resp, nil
+}
+
+// apiGet is the common case.
+func apiGet(path string) (*http.Response, error) {
+	req, err := apiRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	return apiDo(req)
+}
+
 // location is where a session's sandbox pod lives, as reported by the server.
 type location struct {
 	Namespace string `json:"namespace"`
@@ -50,7 +102,7 @@ type location struct {
 // sessionLocation asks the server where a session's pod is. The layout is the
 // server's to decide, so the CLI reads it rather than reconstructing it.
 func sessionLocation(sessionID string) (location, error) {
-	resp, err := http.Get(serverURL() + "/v1/sessions/" + sessionID)
+	resp, err := apiGet("/v1/sessions/" + sessionID)
 	if err != nil {
 		return location{}, err
 	}

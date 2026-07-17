@@ -31,7 +31,7 @@ SPENT_BEFORE=$(curl -sf "$SERVER/v1/budgets/default" | json "['spent_usd']")
 
 step "create pi session"
 RESP=$(curl -sf -X POST "$SERVER/v1/sessions" -H 'content-type: application/json' \
-  -d '{"user":"e2e","agent":"pi","budget_id":"default"}') \
+  -d '{"agent":"pi","budget_id":"default"}') \
   || fail "session create rejected — is the pi agent configured (agentImagePi + gateway.openai.*)?"
 SID=$(echo "$RESP" | json "['id']")
 echo "session: $SID"

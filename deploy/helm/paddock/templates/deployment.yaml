@@ -3,6 +3,12 @@
 {{- if and (not .Values.gateway.existingSecret) (not .Values.gateway.openai.upstream) }}
   {{- fail "paddock: the gateway has no model upstream. Set gateway.existingSecret (a Secret holding ANTHROPIC_API_KEY) or gateway.openai.upstream (an OpenAI-compatible endpoint)." }}
 {{- end }}
+{{- if and (not .Values.auth.existingSecret) (not .Values.auth.disabled) }}
+  {{- fail "paddock: the API has no authentication. Set auth.existingSecret (a Secret holding tokens.json) or, if you really mean to serve the API to anyone who can reach it, auth.disabled=true." }}
+{{- end }}
+{{- if and .Values.auth.existingSecret .Values.auth.disabled }}
+  {{- fail "paddock: auth.existingSecret and auth.disabled contradict each other; pick one." }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -92,6 +98,11 @@ spec:
             # bound here and nowhere else.
             - --sandbox-namespace={{ .Release.Namespace }}
             - --seed-budget-usd={{ .Values.server.seedBudgetUSD }}
+            {{- if .Values.auth.existingSecret }}
+            - --auth-tokens=/auth/tokens.json
+            {{- else }}
+            - --auth-disabled
+            {{- end }}
           ports:
             - containerPort: {{ .Values.server.port }}
           readinessProbe:
@@ -111,6 +122,11 @@ spec:
               mountPath: /data
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.auth.existingSecret }}
+            - name: auth
+              mountPath: /auth
+              readOnly: true
+            {{- end }}
         - name: gateway
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | toString }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -203,6 +219,11 @@ spec:
         # readOnlyRootFilesystem leaves SQLite nowhere to put temp files.
         - name: tmp
           emptyDir: {}
+        {{- if .Values.auth.existingSecret }}
+        - name: auth
+          secret:
+            secretName: {{ .Values.auth.existingSecret }}
+        {{- end }}
         - name: policies
           configMap:
             name: {{ .Release.Name }}-policies

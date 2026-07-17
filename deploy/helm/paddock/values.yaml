@@ -29,6 +29,23 @@ sandbox:
   runtimeClassName: ""
   priorityClassName: ""
 
+# Who may call the control-plane API. Sandboxes cannot reach it at all (their
+# NetworkPolicy is port-scoped to the gateway), so this is about humans and CI
+# on your network.
+#
+# There is no default: paddock's claim is that it can tell you who did what,
+# and a server that accepts anyone cannot. Pick one.
+#
+#   existingSecret: name of a Secret with key tokens.json —
+#     {"users":[{"token":"...","subject":"viktor","groups":["paddock-admin"]}]}
+#     A subject owns the sessions it creates; paddock-admin sees everyone's.
+#
+#   disabled: true — no authentication whatsoever. Every caller owns every
+#     session and can pull anyone's workspace. For a laptop or a k3d loop.
+auth:
+  existingSecret: ""
+  disabled: false
+
 server:
   port: 8080
   # Dev convenience: seed a 'default' budget with this USD limit (0 disables).

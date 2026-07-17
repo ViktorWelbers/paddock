@@ -100,6 +100,7 @@ k3d-deploy:
 		--set agentImage=$(REGISTRY)/$(AGENT_IMG):$(TAG) \
 		--set ingress.enabled=true \
 		--set ingress.host="" \
+		--set auth.disabled=true \
 		--set-json 'gateway.egress.allowlist.groups={"package_registries":["pypi.org","files.pythonhosted.org","registry.npmjs.org","proxy.golang.org","sum.golang.org"],"github":["github.com","*.github.com","codeload.github.com","objects.githubusercontent.com"]}' \
 		$(if $(OPENAI_UPSTREAM),\
 			--set agentImagePi=$(REGISTRY)/$(AGENT_PI_IMG):$(TAG) \
