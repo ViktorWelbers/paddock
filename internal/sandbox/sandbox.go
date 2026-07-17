@@ -228,7 +228,16 @@ func Render(spec Spec) (Resources, error) {
 			EnableServiceLinks:           &falseVal,
 			// fsGroup makes the workspace emptyDir writable for the
 			// non-root agent uid (emptyDir mounts root:root otherwise).
-			SecurityContext: &corev1.PodSecurityContext{FSGroup: &fsGroup},
+			// The rest satisfies Pod Security Admission's "restricted"
+			// profile, which is the posture a cluster running other
+			// people's agents should be on: seccomp is the one control
+			// PSA demands at the pod level, and without it the API server
+			// rejects the sandbox outright.
+			SecurityContext: &corev1.PodSecurityContext{
+				FSGroup:        &fsGroup,
+				RunAsNonRoot:   &trueVal,
+				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+			},
 			Volumes: []corev1.Volume{{
 				Name: "workspace",
 				VolumeSource: corev1.VolumeSource{

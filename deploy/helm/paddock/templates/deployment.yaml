@@ -44,10 +44,18 @@ spec:
         runAsUser: 65532
         runAsGroup: 65532
         fsGroup: 65532
+        # Paddock asks operators to run agents under Pod Security Admission's
+        # "restricted" profile, so its own control plane meets it too — the
+        # chart installs into a restricted namespace unchanged.
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: server
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | toString }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- include "paddock.containerSecurityContext" . | nindent 12 }}
           command: ["/paddock-server"]
           args:
             - --addr=:{{ .Values.server.port }}
@@ -86,9 +94,13 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: tmp
+              mountPath: /tmp
         - name: gateway
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | toString }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- include "paddock.containerSecurityContext" . | nindent 12 }}
           command: ["/paddock-gateway"]
           args:
             - --addr=:{{ .Values.gateway.port }}
@@ -148,6 +160,8 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: tmp
+              mountPath: /tmp
             - name: policies
               mountPath: /policies
               readOnly: true
@@ -167,6 +181,9 @@ spec:
               readOnly: true
             {{- end }}
       volumes:
+        # readOnlyRootFilesystem leaves SQLite nowhere to put temp files.
+        - name: tmp
+          emptyDir: {}
         - name: policies
           configMap:
             name: {{ .Release.Name }}-policies

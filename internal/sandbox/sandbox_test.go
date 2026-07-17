@@ -1,7 +1,10 @@
 package sandbox
 
 import (
+	"slices"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 func testSpec() Spec {
@@ -108,6 +111,50 @@ func TestRenderPodIsNotAControlPlaneServiceEndpoint(t *testing.T) {
 	for _, label := range []string{"app.kubernetes.io/name", "app.kubernetes.io/instance", "paddock.dev/component"} {
 		if v, ok := res.Pod.Labels[label]; ok {
 			t.Errorf("sandbox pod carries %s=%q: the control plane's Services select on it and would route to sandboxes", label, v)
+		}
+	}
+}
+
+// A cluster that runs other people's agents should have the sandbox
+// namespace on Pod Security Admission's "restricted" profile. If the pod
+// misses any of these, the API server refuses to create it and every
+// `paddock run` fails at admission — so the controls are asserted here
+// rather than discovered on someone else's cluster.
+func TestRenderMeetsPodSecurityRestricted(t *testing.T) {
+	res, err := Render(testSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := res.Pod.Spec
+
+	if pod.SecurityContext == nil || pod.SecurityContext.SeccompProfile == nil ||
+		pod.SecurityContext.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+		t.Error("restricted requires seccompProfile RuntimeDefault; without it admission rejects the pod")
+	}
+	if pod.SecurityContext == nil || pod.SecurityContext.RunAsNonRoot == nil || !*pod.SecurityContext.RunAsNonRoot {
+		t.Error("restricted requires runAsNonRoot at the pod level")
+	}
+	if pod.HostNetwork || pod.HostPID || pod.HostIPC {
+		t.Error("restricted forbids host namespaces")
+	}
+	for _, v := range pod.Volumes {
+		if v.HostPath != nil {
+			t.Errorf("volume %q is a hostPath, which restricted forbids", v.Name)
+		}
+	}
+	for _, c := range pod.Containers {
+		sc := c.SecurityContext
+		if sc == nil {
+			t.Fatalf("container %q has no securityContext", c.Name)
+		}
+		if sc.Privileged != nil && *sc.Privileged {
+			t.Errorf("container %q is privileged", c.Name)
+		}
+		if sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {
+			t.Errorf("container %q must set allowPrivilegeEscalation: false", c.Name)
+		}
+		if sc.Capabilities == nil || !slices.Contains(sc.Capabilities.Drop, corev1.Capability("ALL")) {
+			t.Errorf("container %q must drop ALL capabilities", c.Name)
 		}
 	}
 }

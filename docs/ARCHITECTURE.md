@@ -121,3 +121,17 @@ OSS: everything above. Enterprise: SSO/SAML (auth middleware), chargeback export
 ## Isolation roadmap
 
 MVP: pods + a port-scoped NetworkPolicy + container limits + no mounted secrets + no service-account token (threat model: careless/compromised agent, not hostile kernel exploits). Next: optional `runtimeClassName: gvisor`, then Kata/microVMs for customers who demand hardware isolation. The pod spec is rendered in one place (`internal/sandbox`), so isolation upgrades are config, not rearchitecture.
+
+### Pod Security Admission
+
+Both the sandbox pods and paddock's own control plane satisfy the **`restricted`** Pod Security Standard: `runAsNonRoot`, `seccompProfile: RuntimeDefault`, `allowPrivilegeEscalation: false`, all capabilities dropped, no host namespaces, no hostPath. The control-plane containers additionally run with a read-only root filesystem (`/tmp` is an emptyDir for SQLite's temp files).
+
+This is meant to be used, not admired — label the namespace and the cluster enforces it:
+
+```sh
+kubectl label namespace paddock \
+  pod-security.kubernetes.io/enforce=restricted \
+  pod-security.kubernetes.io/enforce-version=latest
+```
+
+The controls are asserted in `internal/sandbox`'s unit tests because the failure mode is unhelpful: a sandbox missing `seccompProfile` isn't degraded, it's `Forbidden` at admission, and every `paddock run` fails on a cluster the developer can't debug.
