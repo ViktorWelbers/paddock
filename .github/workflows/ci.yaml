@@ -36,6 +36,21 @@ jobs:
           --set gateway.openai.caConfigMap=openai-ca
           --set ingress.enabled=true --set ingress.tls.enabled=true
           --set persistence.enabled=true > /dev/null
+      # A self-hosted-models-only install must not need an Anthropic secret.
+      - name: renders without an Anthropic key
+        run: >
+          helm template paddock deploy/helm/paddock
+          --set gateway.existingSecret=
+          --set agentImagePi=example/agent-pi:ci
+          --set gateway.openai.upstream=http://models.svc
+          --set gateway.openai.model=example/model > /dev/null
+      # ...and an install with no model upstream at all must fail loudly.
+      - name: refuses an install with no model upstream
+        run: |
+          if helm template paddock deploy/helm/paddock --set gateway.existingSecret= >/dev/null 2>&1; then
+            echo "expected the chart to reject a gateway with no model upstream"
+            exit 1
+          fi
 
   images:
     runs-on: ubuntu-latest

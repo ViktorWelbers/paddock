@@ -41,9 +41,14 @@ func main() {
 	egressAllowlist := flag.String("egress-allowlist", "", "JSON file of allowed egress domain groups (missing/empty = deny all, still audited)")
 	flag.Parse()
 
+	// A deployment that only serves self-hosted models through the OpenAI
+	// path has no Anthropic key to give, and demanding one anyway made the
+	// chart uninstallable without inventing a fake secret. At least one
+	// upstream is still required — a gateway with no model behind it is a
+	// misconfiguration, not a valid deployment.
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	if apiKey == "" {
-		log.Fatal("ANTHROPIC_API_KEY must be set on the gateway (sandboxes never see it)")
+	if apiKey == "" && *upstreamOpenAI == "" {
+		log.Fatal("no model upstream: set ANTHROPIC_API_KEY (sandboxes never see it) or --upstream-openai")
 	}
 
 	// WAL + busy_timeout: the server writes from another process, and the
@@ -79,11 +84,22 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok\n")) })
-	mux.Handle("/anthropic/", &gateway.AnthropicProxy{
-		Backends: backends,
-		Upstream: upstreamURL,
-		APIKey:   apiKey,
-	})
+	if apiKey != "" {
+		mux.Handle("/anthropic/", &gateway.AnthropicProxy{
+			Backends: backends,
+			Upstream: upstreamURL,
+			APIKey:   apiKey,
+		})
+		log.Printf("Anthropic proxy enabled (upstream %s)", *upstream)
+	} else {
+		// Say so out loud: without this the sandbox's model call would fail
+		// as a bare 404 from the mux, which reads like a paddock bug rather
+		// than a deployment that was never given an Anthropic key.
+		mux.HandleFunc("/anthropic/", func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "this gateway has no Anthropic key configured", http.StatusServiceUnavailable)
+		})
+		log.Print("Anthropic proxy disabled: no ANTHROPIC_API_KEY")
+	}
 
 	if *upstreamOpenAI != "" {
 		openaiURL, err := url.Parse(*upstreamOpenAI)
@@ -129,7 +145,7 @@ func main() {
 
 	srv := &http.Server{Addr: *addr, Handler: mux}
 	go func() {
-		log.Printf("paddock-gateway listening on %s (upstream %s)", *addr, *upstream)
+		log.Printf("paddock-gateway listening on %s", *addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatal(err)
 		}

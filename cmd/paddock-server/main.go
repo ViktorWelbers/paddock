@@ -29,7 +29,7 @@ import (
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	dbPath := flag.String("db", "paddock.db", "SQLite database path (shared with the gateway)")
-	agentImage := flag.String("agent-image", "ghcr.io/paddock/agent-claude:latest", "fallback image spawned for sessions")
+	agentImage := flag.String("agent-image", "ghcr.io/paddock/agent-claude:latest", "image for the default agent ("+sandbox.DefaultAgent+")")
 	agentImages := flag.String("agent-images", "", `per-agent images, e.g. "claude=reg/agent-claude:v1,pi=reg/agent-pi:v1"`)
 	gatewayURL := flag.String("gateway-url", "http://paddock-gateway.paddock.svc:8081/anthropic", "ANTHROPIC_BASE_URL value inside sandboxes")
 	openaiURL := flag.String("openai-gateway-url", "http://paddock-gateway.paddock.svc:8081/openai/v1", "gateway base URL for openai-completions agents (pi)")
@@ -83,8 +83,7 @@ func main() {
 		Exec:        execer,
 		Config: api.Config{
 			Namespace:      ns,
-			AgentImage:     *agentImage,
-			AgentImages:    parseAgentImages(*agentImages),
+			AgentImages:    agentImageMap(*agentImage, *agentImages),
 			GatewayURL:     *gatewayURL,
 			OpenAIURL:      *openaiURL,
 			OpenAIModel:    *openaiModel,
@@ -114,6 +113,22 @@ func main() {
 	if err := db.Close(); err != nil {
 		log.Printf("close db: %v", err)
 	}
+}
+
+// agentImageMap resolves the agent → image table. --agent-image names the
+// image for the default agent; --agent-images registers the rest. An agent
+// that appears in neither is unsupported on this server, which is the whole
+// point of building the map up front: `paddock run typo` should be a 400,
+// not a Claude sandbox wearing the wrong name.
+func agentImageMap(defaultImage, pairs string) map[string]string {
+	m := parseAgentImages(pairs)
+	if m == nil {
+		m = map[string]string{}
+	}
+	if _, ok := m[sandbox.DefaultAgent]; !ok && defaultImage != "" {
+		m[sandbox.DefaultAgent] = defaultImage
+	}
+	return m
 }
 
 // parseAgentImages parses "agent=image,agent=image" into a map.

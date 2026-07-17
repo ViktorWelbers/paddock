@@ -114,7 +114,6 @@ func (s *Store) setStatus(id, status string) error {
 
 // Config carries the server's sandbox defaults.
 type Config struct {
-	AgentImage     string            // fallback image when the agent has no entry in AgentImages
 	AgentImages    map[string]string // agent name → image, e.g. {"claude": ..., "pi": ...}
 	GatewayURL     string            // Anthropic-path gateway URL (ANTHROPIC_BASE_URL for claude)
 	OpenAIURL      string            // OpenAI-path gateway URL for openai-completions agents
@@ -135,11 +134,10 @@ func (c Config) locate(sess Session) Session {
 }
 
 // imageFor picks the sandbox image for an agent; empty means unsupported.
+// An agent the operator never configured has no image and no env contract,
+// so it is rejected rather than quietly served the default one.
 func (c Config) imageFor(agent string) string {
-	if img, ok := c.AgentImages[agent]; ok {
-		return img
-	}
-	return c.AgentImage
+	return c.AgentImages[agent]
 }
 
 // Handler wires the HTTP surface.

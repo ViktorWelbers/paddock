@@ -23,6 +23,10 @@ gateway:
   upstreamAnthropic: https://api.anthropic.com
   # Name of an existing Secret with key ANTHROPIC_API_KEY. The real provider
   # key lives only here — never inside sandboxes.
+  #
+  # Empty disables the /anthropic path entirely, which is the right setting
+  # for a deployment that only serves self-hosted models: set
+  # gateway.openai.upstream instead. One of the two is required.
   existingSecret: paddock-anthropic
   # OpenAI-compatible upstream (vLLM, llama.cpp, ...) for agents like pi.
   openai:

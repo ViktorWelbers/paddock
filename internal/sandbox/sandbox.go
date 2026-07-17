@@ -31,6 +31,10 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+// DefaultAgent is the agent kind whose provider env contract agentEnv falls
+// back to, and the one --agent-image names.
+const DefaultAgent = "claude"
+
 const (
 	labelSession   = "paddock.dev/session"
 	labelManagedBy = "app.kubernetes.io/managed-by"

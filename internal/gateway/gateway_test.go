@@ -56,7 +56,8 @@ func newBackends(t *testing.T, limitUSD float64) (Backends, api.Session) {
 		t.Fatal(err)
 	}
 	h := &api.Handler{Sessions: sessions, Ledger: ledger, Audit: auditStore,
-		Provisioner: sandbox.Noop{}, Config: api.Config{AgentImage: "img", GatewayURL: "http://gw"}}
+		Provisioner: sandbox.Noop{}, Config: api.Config{
+			AgentImages: map[string]string{"claude": "img"}, GatewayURL: "http://gw"}}
 	rec := httptest.NewRecorder()
 	h.Routes().ServeHTTP(rec, httptest.NewRequest("POST", "/v1/sessions",
 		strings.NewReader(`{"user":"viktor","agent":"claude","budget_id":"b1"}`)))
