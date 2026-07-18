@@ -172,7 +172,7 @@ type Handler struct {
 
 // publicPaths need no identity: a health check has none to give, and the
 // dashboard is markup — its data arrives through the authenticated API.
-var publicPaths = []string{"/healthz", "/"}
+var publicPaths = []string{"/healthz", "/readyz", "/"}
 
 // Handler returns the fully wired HTTP handler: routes behind the
 // authentication middleware.
@@ -181,7 +181,10 @@ func (h *Handler) Handler() http.Handler {
 	if a == nil {
 		a = auth.Anonymous{}
 	}
-	return auth.Middleware(a, publicPaths, h.Routes())
+	// requestLogging sits inside auth so every logged request already carries
+	// its subject; the access log is the operator's view, the audit store the
+	// compliance one.
+	return auth.Middleware(a, publicPaths, requestLogging(h.Routes()))
 }
 
 // caller is the authenticated identity for this request. Requests always
@@ -223,6 +226,8 @@ func (h *Handler) Routes() *http.ServeMux {
 		w.Write(dashboardHTML)
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
+	mux.HandleFunc("GET /readyz", h.readyz)
+	mux.HandleFunc("GET /metrics", h.metrics)
 	mux.HandleFunc("POST /v1/sessions", h.createSession)
 	mux.HandleFunc("GET /v1/sessions", h.listSessions)
 	mux.HandleFunc("GET /v1/sessions/{id}", h.getSession)

@@ -108,9 +108,12 @@ spec:
             {{- end }}
           ports:
             - containerPort: {{ .Values.server.port }}
+          # Readiness is deep (the database must answer), liveness shallow (is
+          # the process up): a DB blip should drain traffic, not restart the pod
+          # into a crashloop that cannot fix a database.
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: {{ .Values.server.port }}
           livenessProbe:
             httpGet:

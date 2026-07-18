@@ -99,6 +99,28 @@ func (s *Store) Record(e Event) {
 	}
 }
 
+// CountByKind reports the cumulative number of events of each kind. The table
+// is append-only, so these are genuinely monotonic — safe to expose as
+// Prometheus counters, and they survive a restart because they are read from
+// the store, not held in memory.
+func (s *Store) CountByKind() (map[string]int64, error) {
+	rows, err := s.db.Query(`SELECT kind, count(*) FROM audit_events GROUP BY kind`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var kind string
+		var n int64
+		if err := rows.Scan(&kind, &n); err != nil {
+			return nil, err
+		}
+		out[kind] = n
+	}
+	return out, rows.Err()
+}
+
 // BySession returns a session's events in insertion order.
 func (s *Store) BySession(sessionID string) ([]Event, error) {
 	rows, err := s.db.Query(

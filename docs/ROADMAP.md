@@ -115,11 +115,16 @@ Then:
       cursor, and no way to query across sessions, which is also what a SIEM
       export (M4) will need. Nothing prunes, either: the audit table grows
       forever inside the same SQLite file the sessions live in.
-- [ ] **Operational visibility.** No `/metrics`, no request logging, no way to
-      answer "how many sandboxes are running, what is failing, how much is
-      being spent" without reading the SQLite file. The audit store already
-      holds most of the answers; nothing exposes them. First thing an SRE asks
-      for and currently the weakest part of the operator story.
+- [x] **Operational visibility.** A `/metrics` endpoint (Prometheus text
+      format) answers "how many sandboxes are running, what is failing, how
+      much is being spent" — `paddock_sessions{status}`, `paddock_budget_*_usd`,
+      and `paddock_events_total{kind}` computed from the stores at scrape time,
+      so nothing resets on a restart and the append-only audit trail gives true
+      counters. Authenticated, because the chart's ingress is a bare `/` prefix.
+      Plus a structured access log (method, path, status, duration, subject) and
+      a deep `/readyz` that drains traffic when the database is unreachable
+      while liveness stays shallow. Remaining: request-latency histograms, a
+      gateway-side `/readyz`, and the SIEM export below.
 - [x] **Session expiry.** A TTL reaper (`--max-session-age`, default 24h in the
       chart) sweeps on a ticker and ends sessions past their age: the sandbox is
       torn down and the row moves to `expired`, which — because `ByToken` only

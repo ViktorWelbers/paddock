@@ -129,7 +129,21 @@ One sharp edge worth knowing when writing rules: optional fields are **omitted**
 
 ## Audit
 
-Append-only `events` table: `ts, session_id, actor, kind, payload(JSON)`. Kinds: `session.created`, `session.deleted`, `model.call`, `budget.warn`, `budget.exhausted`, `mcp.call`, `policy.denied`, `egress.allowed`, `egress.denied`, `egress.closed`, `workspace.push`, `workspace.pull`. The enterprise tier adds hash-chaining (tamper evidence) and SIEM/OTLP export; OSS keeps the same schema so evidence is portable.
+Append-only `events` table: `ts, session_id, actor, kind, payload(JSON)`. Kinds: `session.created`, `session.deleted`, `session.expired`, `session.orphaned`, `sandbox.reaped`, `model.call`, `budget.warn`, `budget.exhausted`, `mcp.call`, `policy.denied`, `egress.allowed`, `egress.denied`, `egress.closed`, `workspace.push`, `workspace.pull`, `git.credentials.injected`. The enterprise tier adds hash-chaining (tamper evidence) and SIEM/OTLP export; OSS keeps the same schema so evidence is portable.
+
+## Observability
+
+Two views, deliberately separate. The **audit store** is the compliance record — who did what, kept forever, per session. The **operator view** is `/metrics` and the access log — how the fleet is doing right now, for an SRE, not an auditor.
+
+`GET /metrics` is Prometheus text format, computed from the stores at scrape time rather than accumulated in memory, so nothing resets on a restart:
+
+- `paddock_sessions{status}` — gauge; running/failed/expired/deleted, the terminal states emitted even at zero so a panel does not blank out.
+- `paddock_budget_limit_usd{budget}` / `paddock_budget_spent_usd{budget}` — gauges from the ledger.
+- `paddock_events_total{kind}` — counter per audit kind. The audit table is append-only, so these are genuinely monotonic and survive restarts, which in-memory counters would not.
+
+It is **authenticated** — the one metrics endpoint that is not public — because the chart's ingress is a bare `/` prefix, so an open metrics path would put budget spend on the internet. Scrape it in-cluster with a bearer token. The access log is one structured line per request (method, path, status, duration, subject), emitted inside the auth middleware so the subject is already resolved.
+
+Health is split so the kubelet does the right thing: `/healthz` is shallow (the process is up) and backs **liveness**; `/readyz` pings the database and backs **readiness**, so a database blip drains traffic instead of restarting the pod into a crashloop that cannot fix a database. Both are public — they carry no credential and reveal only up or down.
 
 ## Open-core boundary (technical)
 
