@@ -88,6 +88,21 @@ Direction matters for trust. Pushing into the pod needs no path sanitisation: `t
 
 In a git repo the upload set is `git ls-files -co --exclude-standard` plus `.git`, so `.gitignore` is the contract and `node_modules` stays home.
 
+## Git credentials (encrypted handoff)
+
+An agent that can read the code but not `git push` is half a tool, so `paddock run` installs the repo's credentials into the sandbox. It reads them from **git's own helper chain** (`git credential fill`) — the macOS keychain, libsecret, `~/.git-credentials`, whatever already makes `git push` work on the laptop — for the https hosts the repo has remotes on, including enterprise hosts like `github.axa.com`. ssh remotes are skipped: a key and an agent are a different mechanism (ssh-agent forwarding is on the roadmap).
+
+The credential is the developer's own and the agent works as the developer, so it is not a secret *from the agent*. It must, however, be a secret *from the control plane*: paddock operates the cluster, so an injection streamed in the clear would sit in server memory and in whatever records the kube API server's exec channel. So the handoff is encrypted end to end, and the plaintext never transits paddock:
+
+```
+pod: age-keygen ─▶ private key stays in the pod           (never leaves)
+CLI: GET  /git-recipient  ◀── age1… public recipient ──── server ──exec: age-keygen -y ──▶ pod
+CLI: encrypt cred file to age1…, POST /git-credentials {ciphertext, hosts}
+     ── ciphertext ──▶ server ── exec: age -d -i key > ~/.git-credentials ──▶ pod
+```
+
+The pod generates an `age` (X25519) keypair on first ask and keeps the private half; the server only ever handles the public recipient and the opaque ciphertext. Only the pod can open it. The credential lands `0600` in the agent's home under git's own `store` helper — not in the pod spec, not in etcd, not in the workspace the agent might commit. Every injection is audited by host and username; **never the secret** (which the server cannot see anyway). The boundary this draws is passive exposure — capture in transit or at rest in the control plane — not paddock itself, which can already exec into the pod; repo-scoped, short-lived tokens remain the answer to "the agent can use what it can read". `--no-git-credentials` opts out. One caveat: a token baked directly into a remote URL in `.git/config` still rides along in the workspace tar in the clear, so prefer a credential helper — which is the source the harvest reads.
+
 ## Budgets
 
 Hierarchical ledger: `org → team → user → session`. Each node has a limit and accumulated spend; a debit walks up the chain and fails if any ancestor is exhausted. Soft thresholds emit warning events (surface: CLI + audit log). Price table maps model → €/Mtok input/output; overridable in config because list prices drift.

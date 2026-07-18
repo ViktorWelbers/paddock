@@ -3,6 +3,7 @@ module github.com/viktorwelbers/paddock
 go 1.26.4
 
 require (
+	filippo.io/age v1.3.1
 	github.com/open-policy-agent/opa v1.18.2
 	github.com/urfave/cli/v3 v3.10.1
 	golang.org/x/net v0.55.0
@@ -14,6 +15,7 @@ require (
 )
 
 require (
+	filippo.io/hpke v0.4.0 // indirect
 	github.com/agnivade/levenshtein v1.2.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect

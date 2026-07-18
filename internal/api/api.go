@@ -227,6 +227,8 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/sessions/{id}/events", h.sessionEvents)
 	mux.HandleFunc("POST /v1/sessions/{id}/workspace", h.pushWorkspace)
 	mux.HandleFunc("GET /v1/sessions/{id}/workspace", h.pullWorkspace)
+	mux.HandleFunc("GET /v1/sessions/{id}/git-recipient", h.gitRecipient)
+	mux.HandleFunc("POST /v1/sessions/{id}/git-credentials", h.injectGitCredentials)
 	mux.HandleFunc("GET /v1/budgets", h.listBudgets)
 	mux.HandleFunc("GET /v1/budgets/{id}", h.getBudget)
 	return mux

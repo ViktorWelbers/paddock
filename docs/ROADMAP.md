@@ -32,6 +32,19 @@
       rebinding, and audited allow/deny/close with byte counts (`make e2e-egress`,
       verified live: `pip install` and github clone through the proxy, gitlab and an
       exfiltration attempt refused and audited)
+- [x] **Git credentials, encrypted end to end.** `paddock run` harvests the
+      repo's credentials from git's own helper chain (keychain/libsecret/
+      `~/.git-credentials` — no paddock-specific config) for the https hosts it
+      has remotes on, including enterprise hosts like `github.axa.com`. The
+      handoff never exposes the token to the control plane: the pod generates an
+      age keypair and keeps the private half, the CLI encrypts to the public
+      half, and the server moves only ciphertext into the sandbox, where `age -d`
+      opens it. Audited by host and username, never the secret. Opt out with
+      `--no-git-credentials`. Remaining: ssh-agent forwarding (ssh remotes are a
+      different mechanism and are skipped today); and note that a token baked
+      directly into a remote URL in `.git/config` still travels in the workspace
+      tar — the mitigation is to use a git credential helper, which is what the
+      harvest already reads.
 - [ ] OpenCode as third agent
 
 ## M2 — Launchable OSS

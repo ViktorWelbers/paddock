@@ -82,13 +82,17 @@ func runCmd() *cli.Command {
 				Name:  "no-push",
 				Usage: "start with an empty /workspace instead of uploading the current directory",
 			},
+			&cli.BoolFlag{
+				Name:  "no-git-credentials",
+				Usage: "do not install the repo's git credentials into the sandbox (the agent can read but not push)",
+			},
 		},
 		Action: func(_ context.Context, c *cli.Command) error {
 			agent := c.Args().First()
 			if agent == "" {
 				return cli.Exit("which agent? e.g. paddock run claude", 2)
 			}
-			return runSession(agent, c.Bool("detach"), !c.Bool("no-push"))
+			return runSession(agent, c.Bool("detach"), !c.Bool("no-push"), !c.Bool("no-git-credentials"))
 		},
 	}
 }
@@ -216,7 +220,7 @@ func argOr(v, fallback string) string {
 	return v
 }
 
-func runSession(agent string, detach, push bool) error {
+func runSession(agent string, detach, push, gitCreds bool) error {
 	// No "user" field: the server takes the owner from the credential, so
 	// claiming one here would be decorative at best and a lie at worst.
 	body, _ := json.Marshal(map[string]string{
@@ -253,6 +257,18 @@ func runSession(agent string, detach, push bool) error {
 		if err := pushWorkspace(sess.ID, ".", false); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not upload the workspace: %v\n", err)
 			fmt.Fprintf(os.Stderr, "the sandbox is empty; retry with: paddock push %s\n", sess.ID)
+		}
+	}
+
+	// The repo came up; its credentials should too, or the agent can read the
+	// developer's code and do nothing with it — no fetch, no push, no PR.
+	// Same reasoning as the workspace: doing this per session by hand is the
+	// kind of chore that gets automated badly, so paddock does it once,
+	// properly, from the credentials git already holds.
+	if gitCreds {
+		if err := pushGitCredentials(sess.ID, "."); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not install git credentials: %v\n", err)
+			fmt.Fprintf(os.Stderr, "the agent can read the code but not push it\n")
 		}
 	}
 

@@ -4,6 +4,10 @@
 # execs `pi` with a TTY, everything is baked in at build time because the
 # NetworkPolicy blocks all egress except the gateway.
 #
+# `age` is paddock plumbing, not developer toolchain: the pod uses it to
+# decrypt the git-credential handoff so the token never crosses the control
+# plane in the clear (see docs/ARCHITECTURE.md, "Git credentials").
+#
 # pi itself is installed under /opt/pi; `pi` on PATH is a launcher that
 # renders ~/.pi/agent/models.json from the sandbox env (models.json cannot
 # interpolate env vars into baseUrl) before exec'ing the real binary.
@@ -13,7 +17,7 @@ ARG PI_VERSION=latest
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ripgrep tini procps ca-certificates \
-      python3 python3-pip python3-venv make jq \
+      python3 python3-pip python3-venv make jq age \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g --prefix /opt/pi @earendil-works/pi-coding-agent@${PI_VERSION} \
  && npm cache clean --force

@@ -25,6 +25,9 @@ const (
 	KindEgressClosed    = "egress.closed"
 	KindWorkspacePush   = "workspace.push"
 	KindWorkspacePull   = "workspace.pull"
+	// The developer's git credentials were installed in a sandbox. Hosts and
+	// usernames are recorded; the secret never is.
+	KindGitCredentials = "git.credentials.injected"
 	// Reconciliation: a sandbox no session owned was destroyed, or a session
 	// whose sandbox had vanished was marked failed.
 	KindSandboxReaped   = "sandbox.reaped"

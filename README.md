@@ -94,16 +94,26 @@ agent has real history — which means `.gitignore` already decides what travels
 and `node_modules` stays home. Outside a repo, the directory goes up as-is.
 
 ```sh
-paddock run claude              # uploads the current directory, then attaches
-paddock run claude --no-push    # start with an empty /workspace
-paddock push <id> [dir]         # upload again (--clean to mirror exactly)
-paddock pull <id> [dir]         # bring the agent's edits back
+paddock run claude                     # uploads the current directory, then attaches
+paddock run claude --no-push           # start with an empty /workspace
+paddock run claude --no-git-credentials # don't install git credentials (read, not push)
+paddock push <id> [dir]                # upload again (--clean to mirror exactly)
+paddock pull <id> [dir]                # bring the agent's edits back
 ```
 
 `pull` overwrites what the archive contains and leaves everything else alone,
 like a git checkout. Files travel through the server over `pods/exec`, so the
 CLI needs no kubeconfig and no exec rights of its own, and both directions are
 audited (`workspace.push` / `workspace.pull`, with byte counts and a sha256).
+
+`paddock run` also hands the repo's **git credentials** to the sandbox, so the
+agent can clone and push against private and enterprise hosts (`github.axa.com`
+and friends) with nothing to configure per session — they come from git's own
+credential helper, the same place `git push` reads. The handoff is encrypted
+end to end: the pod holds an `age` private key, the CLI encrypts to its public
+half, and paddock moves only ciphertext, so the token never crosses the control
+plane in the clear. Audited by host, never the secret. See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#git-credentials-encrypted-handoff).
 
 ## Governed egress: dependencies without a blank cheque
 
