@@ -46,6 +46,7 @@ func main() {
 	kubeconfig := flag.String("kubeconfig", "", "kubeconfig path; empty = in-cluster config if available, else no-op provisioner")
 	namespace := flag.String("sandbox-namespace", "", "namespace sandboxes run in (empty = this pod's own, which is what the chart's Role grants; only set this if you bound the provisioner Role elsewhere)")
 	seedBudgetUSD := flag.Float64("seed-budget-usd", 25, "create a 'default' budget with this limit if none exists (dev convenience, 0 disables)")
+	maxSessionAge := flag.Duration("max-session-age", 0, "tear down sessions older than this and invalidate their tokens (0 = never; a sandbox then lives until `paddock rm`)")
 	authTokens := flag.String("auth-tokens", "", "JSON file of bearer tokens identifying API callers")
 	authDisabled := flag.Bool("auth-disabled", false, "serve the API with no authentication at all — every caller owns every session (laptops and CI only)")
 	flag.Parse()
@@ -122,6 +123,12 @@ func main() {
 	}
 	cancelReconcile()
 
+	// Enforce the session TTL for as long as the server runs. Tied to ctx, so
+	// it stops with the rest on shutdown.
+	if *maxSessionAge > 0 {
+		go reapLoop(ctx, h, *maxSessionAge)
+	}
+
 	srv := &http.Server{Addr: *addr, Handler: h.Handler()}
 	go func() {
 		log.Printf("paddock-server listening on %s", *addr)
@@ -139,6 +146,36 @@ func main() {
 	}
 	if err := db.Close(); err != nil {
 		log.Printf("close db: %v", err)
+	}
+}
+
+// reapLoop enforces the session TTL until ctx is cancelled. The sweep runs
+// often enough that a session dies close to its deadline, but not so often it
+// polls the store for nothing — a tenth of the max age, clamped to a sane
+// band. A blocked provisioner cannot wedge the loop: each sweep is bounded.
+func reapLoop(ctx context.Context, h *api.Handler, maxAge time.Duration) {
+	interval := maxAge / 10
+	if interval < time.Minute {
+		interval = time.Minute
+	}
+	if interval > 15*time.Minute {
+		interval = 15 * time.Minute
+	}
+	log.Printf("session TTL: %s (sweeping every %s)", maxAge, interval)
+
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			sweepCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			if _, err := h.ReapExpired(sweepCtx, maxAge); err != nil {
+				log.Printf("reap expired sessions: %v", err)
+			}
+			cancel()
+		}
 	}
 }
 

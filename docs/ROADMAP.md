@@ -120,11 +120,18 @@ Then:
       being spent" without reading the SQLite file. The audit store already
       holds most of the answers; nothing exposes them. First thing an SRE asks
       for and currently the weakest part of the operator story.
-- [ ] **Session token lifecycle.** Tokens are stored in plaintext in SQLite and
-      never expire: the sessions table is a credential database, and a session
-      that outlives its pod keeps a working token. Wanted: hash at rest (the
-      pod holds the only plaintext copy, so verification only needs the hash),
-      and expiry tied to the session's life.
+- [x] **Session expiry.** A TTL reaper (`--max-session-age`, default 24h in the
+      chart) sweeps on a ticker and ends sessions past their age: the sandbox is
+      torn down and the row moves to `expired`, which — because `ByToken` only
+      serves `running` sessions — invalidates its token in the same stroke. So an
+      idle sandbox can no longer be standing compute *and* a standing credential.
+      Absolute-age for now; idle-based reaping needs per-session activity
+      tracking (below).
+- [ ] **Session token hashing at rest + idle reaping.** Tokens are still stored
+      in plaintext in SQLite. Wanted: hash at rest — the pod holds the only
+      plaintext copy, so `ByToken` only needs to compare digests (the same shape
+      as `auth.Tokens` already uses for API callers) — and an idle-based TTL to
+      complement the absolute cap, keyed off the last audit event per session.
 - [x] Web dashboard (sessions, spend, audit trail) — read-only, embedded in the server at `/`
 - [x] Policy decision input schema pinned + documented (`docs/ARCHITECTURE.md`)
 - [ ] Docs site, quickstart that works on kind/k3d in <10 min

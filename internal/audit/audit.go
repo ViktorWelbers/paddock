@@ -32,6 +32,9 @@ const (
 	// whose sandbox had vanished was marked failed.
 	KindSandboxReaped   = "sandbox.reaped"
 	KindSessionOrphaned = "session.orphaned"
+	// A session outlived its TTL: its sandbox was torn down and its token
+	// invalidated, so an idle session cannot hold a credential indefinitely.
+	KindSessionExpired = "session.expired"
 )
 
 type Event struct {

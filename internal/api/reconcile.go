@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/viktorwelbers/paddock/internal/audit"
 )
@@ -85,4 +86,64 @@ func (h *Handler) Reconcile(ctx context.Context) error {
 		"live", len(live), "running_sessions", len(running),
 		"reaped", reaped, "marked_failed", orphaned)
 	return nil
+}
+
+// ReapExpired ends sessions older than maxAge: the sandbox is torn down and
+// the row moves to `expired`, which also stops its token working, since
+// ByToken only serves running sessions. maxAge <= 0 disables it and the
+// method is a no-op.
+//
+// This is the half of the lifecycle the drift reconcile above does not cover.
+// A sandbox nobody deletes runs forever — holding the CPU and memory the
+// operator pays for, and keeping a working session token alive the whole
+// time, which for a table full of credentials is precisely the standing
+// exposure paddock argues against. An absolute cap is deliberately blunt: a
+// coding sandbox is ephemeral by premise, and an idle-based cap would need
+// per-session activity tracking that does not exist yet (see ROADMAP).
+//
+// Unlike Reconcile, this is safe to run on a ticker: it keys off wall-clock
+// age, not the momentary presence of a pod, so a session created a
+// millisecond ago is never mistaken for a stranded one.
+func (h *Handler) ReapExpired(ctx context.Context, maxAge time.Duration) (int, error) {
+	if maxAge <= 0 {
+		return 0, nil
+	}
+	sessions, err := h.Sessions.list()
+	if err != nil {
+		return 0, fmt.Errorf("list sessions: %w", err)
+	}
+	cutoff := time.Now().Add(-maxAge)
+
+	var reaped int
+	for _, s := range sessions {
+		if s.Status != statusRunning || !s.CreatedAt.Before(cutoff) {
+			continue
+		}
+		if err := h.Provisioner.Delete(ctx, s.ID); err != nil {
+			// Keep going: one stuck sandbox should not spare the rest their TTL.
+			slog.Error("reap: could not tear down expired sandbox", "session", s.ID, "error", err)
+			continue
+		}
+		if err := h.Sessions.setStatus(s.ID, statusExpired); err != nil {
+			// The pod is gone but the row still says running: reconcile will
+			// catch that on the next restart. Better than dropping the loop.
+			slog.Error("reap: sandbox torn down but session not marked expired", "session", s.ID, "error", err)
+			continue
+		}
+		reaped++
+		slog.Info("reaped expired session",
+			"session", s.ID, "user", s.User, "age", time.Since(s.CreatedAt).Round(time.Second).String())
+		h.Audit.Record(audit.Event{
+			SessionID: s.ID, Actor: "paddock", Kind: audit.KindSessionExpired,
+			Payload: map[string]any{
+				"user":            s.User,
+				"age_seconds":     int64(time.Since(s.CreatedAt).Seconds()),
+				"max_age_seconds": int64(maxAge.Seconds()),
+			},
+		})
+	}
+	if reaped > 0 {
+		slog.Info("reaped expired sessions", "count", reaped, "max_age", maxAge.String())
+	}
+	return reaped, nil
 }

@@ -18,7 +18,9 @@ Both server and gateway are single static Go binaries. MVP storage is SQLite (on
    - a **NetworkPolicy** of the same name, selecting that one pod, allowing egress only to the gateway's ports (+ DNS).
 3. The CLI uploads the working directory into the pod's `/workspace` (see below).
 4. The agent runs. All model traffic — and all internet traffic — goes through the gateway because the sandbox literally cannot reach anywhere else.
-5. `DELETE /v1/sessions/{id}` (or TTL) deletes the pod and its policy. Audit events outlive the session.
+5. `DELETE /v1/sessions/{id}` deletes the pod and its policy. Audit events outlive the session.
+
+A session ends one of four ways, and every one of them is terminal in the same place: the status column. `deleted` (the user asked), `failed` (the sandbox vanished under it — see reconciliation), or `expired` (it outlived its TTL). `ByToken` only serves `running` sessions, so *whichever* way a session ends, its sandbox token stops working at the gateway the instant the row changes — there is no separate revocation step to forget. The **TTL reaper** (`--max-session-age`, default 24h in the chart) sweeps on a ticker and, for any session past its age, tears the pod down and marks it `expired`. It keys off wall-clock age rather than the presence of a pod, so unlike the drift reconciliation it is safe to run continuously. This is what stops an idle sandbox from being both standing compute the operator pays for and a standing credential — the exposure a credential store should not leave open. (Absolute, not idle-based: idle detection needs per-session activity tracking that does not exist yet; on the roadmap.)
 
 The NetworkPolicy's gateway rule is **port-scoped**, which matters more than it looks: the server and gateway share a pod (and therefore an IP), so an unscoped rule would let sandboxes reach the control-plane API. They may reach the gateway's ports (8081, model + MCP; 8082, egress proxy) and nothing else.
 

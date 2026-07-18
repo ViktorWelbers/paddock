@@ -53,6 +53,12 @@ server:
   # Size cap of the sandbox /workspace emptyDir (the developer's uploaded files
   # plus whatever the agent installs into it).
   workspaceSizeLimit: 2Gi
+  # Absolute lifetime of a session. Past this, the sandbox is torn down and the
+  # session's token stops working — so an idle sandbox cannot hold a credential
+  # or burn compute indefinitely. A Go duration ("24h", "8h", "90m"); empty
+  # disables it, and a session then lives until `paddock rm`. Blunt on purpose:
+  # a coding sandbox is ephemeral, and this caps standing exposure and cost.
+  maxSessionAge: "24h"
   resources: {}
 
 gateway:

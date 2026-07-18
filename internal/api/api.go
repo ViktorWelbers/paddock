@@ -20,11 +20,14 @@ import (
 )
 
 // Session statuses. A session is running until something ends it: the user
-// (deleted), or the sandbox going away underneath it (failed).
+// (deleted), the sandbox going away underneath it (failed), or it outliving
+// its TTL (expired). Every terminal status drops out of ByToken, so ending a
+// session — however it ends — invalidates its sandbox token at once.
 const (
 	statusRunning = "running"
 	statusDeleted = "deleted"
 	statusFailed  = "failed"
+	statusExpired = "expired"
 )
 
 type Session struct {
@@ -33,7 +36,7 @@ type Session struct {
 	Agent     string    `json:"agent"` // "claude", "opencode", ...
 	BudgetID  string    `json:"budget_id"`
 	Token     string    `json:"token,omitempty"` // returned once on create
-	Status    string    `json:"status"`          // running | deleted | failed
+	Status    string    `json:"status"`          // running | deleted | failed | expired
 	CreatedAt time.Time `json:"created_at"`
 
 	// Where the sandbox runs. Derived from server config rather than stored,

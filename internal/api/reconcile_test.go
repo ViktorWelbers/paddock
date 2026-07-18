@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/viktorwelbers/paddock/internal/audit"
 	"github.com/viktorwelbers/paddock/internal/sandbox"
@@ -152,5 +153,97 @@ func TestReconcileReapsSandboxOfDeletedSession(t *testing.T) {
 	}
 	if !slices.Contains(prov.deleted, id) {
 		t.Errorf("deleted = %v, want the deleted session's leftover sandbox reaped", prov.deleted)
+	}
+}
+
+// A session past its TTL must lose both its pod and its token: an idle sandbox
+// is standing compute and a standing credential, which is exactly what a
+// lifetime cap exists to bound.
+func TestReapExpiredEndsOldSessionsAndKillsTheirTokens(t *testing.T) {
+	prov := &fakeProvisioner{}
+	h := testHandler(t, Config{AgentImages: map[string]string{"claude": "img"}, GatewayURL: "http://gw"})
+	h.Provisioner = prov
+
+	// A session that has been running for a day and a half, with a token a
+	// sandbox would still be presenting to the gateway.
+	old := Session{
+		ID: "stale", User: "viktor", Agent: "claude", BudgetID: "default",
+		Token: "pdk_stale", Status: statusRunning,
+		CreatedAt: time.Now().Add(-36 * time.Hour),
+	}
+	if err := h.Sessions.insert(old); err != nil {
+		t.Fatal(err)
+	}
+	// The token works while the session runs.
+	if _, err := h.Sessions.ByToken("pdk_stale"); err != nil {
+		t.Fatalf("token should authenticate before expiry: %v", err)
+	}
+
+	n, err := h.ReapExpired(context.Background(), 24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("reaped = %d, want 1", n)
+	}
+	if !slices.Contains(prov.deleted, "stale") {
+		t.Errorf("deleted = %v, want the expired sandbox torn down", prov.deleted)
+	}
+	sess, err := h.Sessions.get("stale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Status != statusExpired {
+		t.Errorf("status = %q, want %q", sess.Status, statusExpired)
+	}
+	// The token must stop working the instant the session expires.
+	if _, err := h.Sessions.ByToken("pdk_stale"); err == nil {
+		t.Error("an expired session's token still authenticates — the credential outlived the session")
+	}
+	if k := kindsFor(t, h, "stale"); !slices.Contains(k, audit.KindSessionExpired) {
+		t.Errorf("audit = %v, want a %s event", k, audit.KindSessionExpired)
+	}
+}
+
+// A session inside its TTL is untouched — the common case must be boring.
+func TestReapExpiredSparesYoungSessions(t *testing.T) {
+	prov := &fakeProvisioner{}
+	h := testHandler(t, Config{AgentImages: map[string]string{"claude": "img"}, GatewayURL: "http://gw"})
+	h.Provisioner = prov
+
+	id := sessionID(t, createSessionReq(t, h, "claude"))
+	n, err := h.ReapExpired(context.Background(), 24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 || len(prov.deleted) != 0 {
+		t.Errorf("reaped %d (%v), want nothing: that session was minutes old", n, prov.deleted)
+	}
+	sess, _ := h.Sessions.get(id)
+	if sess.Status != statusRunning {
+		t.Errorf("status = %q, want it left running", sess.Status)
+	}
+}
+
+// maxAge <= 0 disables the cap: even an ancient session is left alone, so an
+// operator who wants unbounded sessions gets them by not setting it.
+func TestReapExpiredDisabledLeavesEverything(t *testing.T) {
+	prov := &fakeProvisioner{}
+	h := testHandler(t, Config{AgentImages: map[string]string{"claude": "img"}, GatewayURL: "http://gw"})
+	h.Provisioner = prov
+
+	if err := h.Sessions.insert(Session{
+		ID: "ancient", User: "viktor", Agent: "claude", BudgetID: "default",
+		Token: "pdk_ancient", Status: statusRunning,
+		CreatedAt: time.Now().Add(-1000 * time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := h.ReapExpired(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 || len(prov.deleted) != 0 {
+		t.Errorf("reaped %d (%v), want nothing when the cap is disabled", n, prov.deleted)
 	}
 }

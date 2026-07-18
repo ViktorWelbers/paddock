@@ -98,6 +98,9 @@ spec:
             # bound here and nowhere else.
             - --sandbox-namespace={{ .Release.Namespace }}
             - --seed-budget-usd={{ .Values.server.seedBudgetUSD }}
+            {{- with .Values.server.maxSessionAge }}
+            - --max-session-age={{ . }}
+            {{- end }}
             {{- if .Values.auth.existingSecret }}
             - --auth-tokens=/auth/tokens.json
             {{- else }}
