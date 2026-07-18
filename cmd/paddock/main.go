@@ -86,13 +86,18 @@ func runCmd() *cli.Command {
 				Name:  "no-git-credentials",
 				Usage: "do not install the repo's git credentials into the sandbox (the agent can read but not push)",
 			},
+			&cli.BoolFlag{
+				Name:  "no-git-signing",
+				Usage: "do not install the repo's commit-signing key into the sandbox (commits are made unsigned)",
+			},
 		},
 		Action: func(_ context.Context, c *cli.Command) error {
 			agent := c.Args().First()
 			if agent == "" {
 				return cli.Exit("which agent? e.g. paddock run claude", 2)
 			}
-			return runSession(agent, c.Bool("detach"), !c.Bool("no-push"), !c.Bool("no-git-credentials"))
+			return runSession(agent, c.Bool("detach"), !c.Bool("no-push"),
+				!c.Bool("no-git-credentials"), !c.Bool("no-git-signing"))
 		},
 	}
 }
@@ -220,7 +225,7 @@ func argOr(v, fallback string) string {
 	return v
 }
 
-func runSession(agent string, detach, push, gitCreds bool) error {
+func runSession(agent string, detach, push, gitCreds, gitSigning bool) error {
 	// No "user" field: the server takes the owner from the credential, so
 	// claiming one here would be decorative at best and a lie at worst.
 	body, _ := json.Marshal(map[string]string{
@@ -269,6 +274,16 @@ func runSession(agent string, detach, push, gitCreds bool) error {
 		if err := pushGitCredentials(sess.ID, "."); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not install git credentials: %v\n", err)
 			fmt.Fprintf(os.Stderr, "the agent can read the code but not push it\n")
+		}
+	}
+
+	// If the developer signs their commits, the agent should too, or a repo
+	// that requires signatures will reject everything the agent produces.
+	// Not fatal: an unsigned commit is worth more than no session.
+	if gitSigning {
+		if err := pushGitSigning(sess.ID, "."); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not install commit signing: %v\n", err)
+			fmt.Fprintf(os.Stderr, "the agent's commits will be unsigned\n")
 		}
 	}
 

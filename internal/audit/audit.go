@@ -28,6 +28,9 @@ const (
 	// The developer's git credentials were installed in a sandbox. Hosts and
 	// usernames are recorded; the secret never is.
 	KindGitCredentials = "git.credentials.injected"
+	// The developer's commit-signing key was installed in a sandbox. The
+	// method and key id are recorded; the private key material never is.
+	KindGitSigning = "git.signing.configured"
 	// Reconciliation: a sandbox no session owned was destroyed, or a session
 	// whose sandbox had vanished was marked failed.
 	KindSandboxReaped   = "sandbox.reaped"

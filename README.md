@@ -97,6 +97,7 @@ and `node_modules` stays home. Outside a repo, the directory goes up as-is.
 paddock run claude                     # uploads the current directory, then attaches
 paddock run claude --no-push           # start with an empty /workspace
 paddock run claude --no-git-credentials # don't install git credentials (read, not push)
+paddock run claude --no-git-signing    # don't install the commit-signing key
 paddock push <id> [dir]                # upload again (--clean to mirror exactly)
 paddock pull <id> [dir]                # bring the agent's edits back
 ```
@@ -112,7 +113,10 @@ and friends) with nothing to configure per session — they come from git's own
 credential helper, the same place `git push` reads. The handoff is encrypted
 end to end: the pod holds an `age` private key, the CLI encrypts to its public
 half, and paddock moves only ciphertext, so the token never crosses the control
-plane in the clear. Audited by host, never the secret. See
+plane in the clear. Audited by host, never the secret. If the developer signs
+their commits, the **signing key** rides the same encrypted channel (ssh or
+gpg, detected from `gpg.format`) so the agent's commits are signed too — opt out
+with `--no-git-signing`. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#git-credentials-encrypted-handoff).
 
 ## Governed egress: dependencies without a blank cheque

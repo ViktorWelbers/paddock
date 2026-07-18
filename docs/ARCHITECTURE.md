@@ -105,6 +105,15 @@ CLI: encrypt cred file to age1…, POST /git-credentials {ciphertext, hosts}
 
 The pod generates an `age` (X25519) keypair on first ask and keeps the private half; the server only ever handles the public recipient and the opaque ciphertext. Only the pod can open it. The credential lands `0600` in the agent's home under git's own `store` helper — not in the pod spec, not in etcd, not in the workspace the agent might commit. Every injection is audited by host and username; **never the secret** (which the server cannot see anyway). The boundary this draws is passive exposure — capture in transit or at rest in the control plane — not paddock itself, which can already exec into the pod; repo-scoped, short-lived tokens remain the answer to "the agent can use what it can read". `--no-git-credentials` opts out. One caveat: a token baked directly into a remote URL in `.git/config` still rides along in the workspace tar in the clear, so prefer a credential helper — which is the source the harvest reads.
 
+### Signed commits
+
+Many orgs require signed commits, so an agent that commits *unsigned* is as blocked as one that cannot push. `paddock run` therefore also installs the developer's **signing key**, over the exact same encrypted channel — the key material is sealed to the pod's `age` recipient and only the pod opens it. The CLI reads how the developer signs from git's own config (`gpg.format`, `user.signingkey`, `commit.gpgsign`) and takes the right branch:
+
+- **ssh** (`gpg.format=ssh`): the private signing key is sealed, decrypted to `~/.ssh/paddock_signing` (`0600`), and git is pointed at it. A literal or agent/hardware key has no file to send and is skipped. Needs `openssh-client` in the image.
+- **openpgp**: only the secret **subkeys** are exported (`gpg --export-secret-subkeys`) — the master secret stays on the laptop — and imported into the pod's keyring. Needs `gnupg` in the image.
+
+A signing identity is a heavier loan than a token (an OpenPGP key signs releases and mail, often with no expiry), so this is opt-out (`--no-git-signing`), the gpg path warns that a subkey left the machine, and every setup is audited by method and key id — **never the key material**. Two honest limits: a passphrase-protected key cannot be used non-interactively (prefer a dedicated passphraseless signing subkey, the usual CI practice), and dynamic values (key id, the sign flags) reach the pod as shell *positional arguments*, never interpolated into the install script, so a hostile value is data, not code.
+
 ## Budgets
 
 Hierarchical ledger: `org → team → user → session`. Each node has a limit and accumulated spend; a debit walks up the chain and fails if any ancestor is exhausted. Soft thresholds emit warning events (surface: CLI + audit log). Price table maps model → €/Mtok input/output; overridable in config because list prices drift.

@@ -40,11 +40,15 @@
       age keypair and keeps the private half, the CLI encrypts to the public
       half, and the server moves only ciphertext into the sandbox, where `age -d`
       opens it. Audited by host and username, never the secret. Opt out with
-      `--no-git-credentials`. Remaining: ssh-agent forwarding (ssh remotes are a
-      different mechanism and are skipped today); and note that a token baked
-      directly into a remote URL in `.git/config` still travels in the workspace
-      tar — the mitigation is to use a git credential helper, which is what the
-      harvest already reads.
+      `--no-git-credentials`. **Signed commits** ride the same encrypted channel:
+      the developer's signing key (ssh or an exported gpg *subkey*, detected from
+      `gpg.format`) is sealed to the pod and installed so the agent's commits are
+      signed as the developer — `--no-git-signing` opts out, images carry `gnupg`
+      and `openssh-client`. Remaining: ssh-agent forwarding (ssh *auth* remotes
+      are a different mechanism and skipped today); passphrase-protected signing
+      keys can't be used non-interactively (prefer a passphraseless subkey); and
+      a token baked into a remote URL in `.git/config` still travels in the
+      workspace tar — use a credential helper, which is what the harvest reads.
 - [ ] OpenCode as third agent
 
 ## M2 — Launchable OSS
