@@ -56,8 +56,14 @@ type Spec struct {
 	OpenAIURL    string // OpenAI-path gateway URL (for agents speaking openai-completions)
 	Model        string // model id for agents that need one pinned (pi against vLLM)
 	SessionToken string // session-scoped credential; never a real provider key
-	CPULimit     string // e.g. "2"
+	CPULimit     string // ceiling a session may burst to, e.g. "2"
 	MemLimit     string // e.g. "4Gi"
+	// Reserved floor, deliberately well under the limit: a coding agent is
+	// bursty and idle most of the time, so reserving the whole limit would
+	// strand cores it rarely uses and (as it did on a two-node cluster) leave
+	// a sandbox unschedulable while the node sat mostly free.
+	CPURequest string // e.g. "500m"
+	MemRequest string // e.g. "2Gi"
 
 	// EgressProxyURL is the gateway's CONNECT proxy for governed internet
 	// access (package registries, git hosts — allowlisted and audited).
@@ -234,6 +240,12 @@ func Render(spec Spec) (Resources, error) {
 	if spec.MemLimit == "" {
 		spec.MemLimit = "4Gi"
 	}
+	if spec.CPURequest == "" {
+		spec.CPURequest = "500m"
+	}
+	if spec.MemRequest == "" {
+		spec.MemRequest = "2Gi"
+	}
 	if spec.WorkspaceSizeLimit == "" {
 		spec.WorkspaceSizeLimit = "2Gi"
 	}
@@ -292,6 +304,10 @@ func Render(spec Spec) (Resources, error) {
 				}},
 				Env: agentEnv(spec),
 				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse(spec.CPURequest),
+						corev1.ResourceMemory: resource.MustParse(spec.MemRequest),
+					},
 					Limits: corev1.ResourceList{
 						corev1.ResourceCPU:    resource.MustParse(spec.CPULimit),
 						corev1.ResourceMemory: resource.MustParse(spec.MemLimit),

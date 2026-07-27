@@ -18,6 +18,25 @@ func testSpec() Spec {
 	}
 }
 
+func TestRenderReservesLessThanItLimits(t *testing.T) {
+	res, err := Render(testSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := res.Pod.Spec.Containers[0].Resources
+	if r.Requests.Cpu().IsZero() || r.Requests.Memory().IsZero() {
+		t.Fatal("requests must be set explicitly, or kube copies the limits and a sandbox reserves its whole ceiling")
+	}
+	// Bursty and mostly idle: reserving the whole limit strands cores and
+	// leaves a sandbox unschedulable on a busy node while it sits mostly free.
+	if r.Requests.Cpu().Cmp(*r.Limits.Cpu()) != -1 {
+		t.Errorf("cpu request %s must be below limit %s", r.Requests.Cpu(), r.Limits.Cpu())
+	}
+	if r.Requests.Memory().Cmp(*r.Limits.Memory()) != -1 {
+		t.Errorf("memory request %s must be below limit %s", r.Requests.Memory(), r.Limits.Memory())
+	}
+}
+
 func TestRenderIsolationInvariants(t *testing.T) {
 	res, err := Render(testSpec())
 	if err != nil {
