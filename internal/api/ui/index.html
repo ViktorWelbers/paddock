@@ -59,12 +59,23 @@
   .payload { color: var(--text-2); white-space: normal; word-break: break-word; }
   .empty { color: var(--text-3); padding: 14px 16px; }
   #events-title span { color: var(--text-3); font-weight: 400; text-transform: none; letter-spacing: 0; }
+  .auth { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; }
+  .auth input { background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+                color: var(--text); padding: 4px 8px; font-size: 12px; width: 150px; }
+  .auth button { background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+                 color: var(--text); padding: 4px 10px; font-size: 12px; cursor: pointer; }
+  .auth button:hover { background: var(--border); }
+  header .refresh { margin-left: 12px; }
 </style>
 </head>
 <body>
 <header>
   <h1>Paddock</h1>
   <span class="sub">governance plane — read-only</span>
+  <span class="auth">
+    <input id="token" type="password" placeholder="API token" autocomplete="off" spellcheck="false" aria-label="API token">
+    <button id="savetok" type="button">save</button>
+  </span>
   <span class="refresh" id="refresh"></span>
 </header>
 
@@ -94,10 +105,28 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":
 const usd = n => "$" + Number(n).toFixed(n < 0.1 && n > 0 ? 4 : 2);
 let selected = null;
 
+// The dashboard is public markup, but the API behind it authenticates. The
+// viewer pastes their bearer token once; it lives only in this browser's
+// localStorage and rides every request. Empty is fine against a server run
+// with auth disabled.
+let token = localStorage.getItem("paddock_token") || "";
+
 async function get(path) {
-  const r = await fetch(path);
+  const r = await fetch(path, token ? { headers: { "Authorization": "Bearer " + token } } : {});
+  if (r.status === 401) throw new Error("401 — paste a valid API token above and press save");
   if (!r.ok) throw new Error(path + ": " + r.status);
   return r.json();
+}
+
+function initAuth() {
+  $("token").value = token;
+  const save = () => {
+    token = $("token").value.trim();
+    localStorage.setItem("paddock_token", token);
+    refresh();
+  };
+  $("savetok").addEventListener("click", save);
+  $("token").addEventListener("keydown", e => { if (e.key === "Enter") save(); });
 }
 
 function renderBudgets(budgets) {
@@ -156,6 +185,7 @@ async function refresh(reloadEvents = true) {
   }
 }
 
+initAuth();
 refresh();
 setInterval(refresh, 10000);
 </script>
