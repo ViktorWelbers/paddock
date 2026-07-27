@@ -1,10 +1,13 @@
 image:
-  repository: ghcr.io/paddock/paddock
+  # Public images so `helm install` works out of the box. A private
+  # deployment overrides these (see the Argo values) to pull from an
+  # in-cluster registry; the defaults are what a first-time user gets.
+  repository: ghcr.io/viktorwelbers/paddock
   tag: latest
   pullPolicy: IfNotPresent
 
 # Image spawned inside session sandboxes (Claude Code preinstalled).
-agentImage: ghcr.io/paddock/agent-claude:latest
+agentImage: ghcr.io/viktorwelbers/agent-claude:latest
 # Image for the pi agent (OpenAI-compatible models through the gateway).
 # Empty = `paddock run pi` is rejected. Requires gateway.openai.upstream.
 agentImagePi: ""
