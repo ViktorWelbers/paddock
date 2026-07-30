@@ -298,6 +298,7 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/sessions/{id}/git-recipient", h.gitRecipient)
 	mux.HandleFunc("POST /v1/sessions/{id}/git-credentials", h.injectGitCredentials)
 	mux.HandleFunc("POST /v1/sessions/{id}/git-signing", h.configureGitSigning)
+	mux.HandleFunc("POST /v1/sessions/{id}/git-identity", h.configureGitIdentity)
 	mux.HandleFunc("GET /v1/budgets", h.listBudgets)
 	mux.HandleFunc("GET /v1/budgets/{id}", h.getBudget)
 	return mux

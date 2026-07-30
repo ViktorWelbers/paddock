@@ -26,7 +26,7 @@
 - [x] The sandbox is usable for real work: the developer's working directory is
       uploaded on `paddock run` (git-aware) and `paddock pull` brings the agent's
       edits back, over the server rather than the CLI's kubeconfig; agent images
-      carry the expected toolchain (git, node, python3, make, jq)
+      carry the expected toolchain (git, go, gh, node, python3, make, jq)
 - [x] Governed egress: a CONNECT proxy on the gateway tunnels TLS end-to-end to
       allowlisted domain groups, decided by allowlist + OPA, defended against DNS
       rebinding, and audited allow/deny/close with byte counts (`make e2e-egress`,
