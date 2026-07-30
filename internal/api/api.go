@@ -141,6 +141,26 @@ func (s *Store) countRunningByUser(user string) (int, error) {
 	return n, err
 }
 
+// budgetIDsByUser returns the distinct budgets a user's own sessions
+// reference — the leaves budget authorization expands up the ancestor chain
+// to build a non-admin caller's visible set.
+func (s *Store) budgetIDsByUser(user string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT budget_id FROM sessions WHERE user = ?`, user)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // Config carries the server's sandbox defaults.
 type Config struct {
 	AgentImages    map[string]string // agent name → image, e.g. {"claude": ..., "pi": ...}
@@ -240,6 +260,17 @@ func (h *Handler) mayAccess(w http.ResponseWriter, r *http.Request, sess Session
 	}
 	http.NotFound(w, r)
 	return false
+}
+
+// visibleBudgetIDs is the set of budgets a non-admin caller may see: the
+// budgets their own sessions reference, expanded up each one's ParentID
+// ancestor chain. Admins don't call this — they already see everything.
+func (h *Handler) visibleBudgetIDs(user string) (map[string]bool, error) {
+	leaves, err := h.Sessions.budgetIDsByUser(user)
+	if err != nil {
+		return nil, err
+	}
+	return h.Ledger.VisibleFrom(leaves)
 }
 
 // dashboardHTML is the read-only web dashboard (sessions, budgets, audit
@@ -490,14 +521,30 @@ func (h *Handler) sessionEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, events)
 }
 
-func (h *Handler) listBudgets(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) listBudgets(w http.ResponseWriter, r *http.Request) {
+	id, ok := caller(r)
+	if !ok {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
 	budgets, err := h.Ledger.List()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	var visible map[string]bool
+	if !id.IsAdmin() {
+		visible, err = h.visibleBudgetIDs(id.Subject)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
 	out := make([]map[string]any, 0, len(budgets))
 	for _, b := range budgets {
+		if !id.IsAdmin() && !visible[b.ID] {
+			continue
+		}
 		out = append(out, map[string]any{
 			"id": b.ID, "name": b.Name, "parent_id": b.ParentID,
 			"limit_usd": b.LimitUSD, "spent_usd": b.SpentUSD,
@@ -507,7 +554,13 @@ func (h *Handler) listBudgets(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (h *Handler) getBudget(w http.ResponseWriter, r *http.Request) {
-	b, err := h.Ledger.Get(r.PathValue("id"))
+	id, ok := caller(r)
+	if !ok {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	budgetID := r.PathValue("id")
+	b, err := h.Ledger.Get(budgetID)
 	if errors.Is(err, sql.ErrNoRows) {
 		http.NotFound(w, r)
 		return
@@ -515,6 +568,19 @@ func (h *Handler) getBudget(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	// 404, not 403: matches mayAccess — a 403 would confirm the budget
+	// exists and belongs to someone else.
+	if !id.IsAdmin() {
+		visible, err := h.visibleBudgetIDs(id.Subject)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !visible[budgetID] {
+			http.NotFound(w, r)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": b.ID, "name": b.Name, "parent_id": b.ParentID,

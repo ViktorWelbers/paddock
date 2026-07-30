@@ -12,6 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/viktorwelbers/paddock/internal/audit"
+	"github.com/viktorwelbers/paddock/internal/auth"
 	"github.com/viktorwelbers/paddock/internal/budget"
 	"github.com/viktorwelbers/paddock/internal/sandbox"
 )
@@ -41,6 +42,71 @@ func testHandler(t *testing.T, cfg Config) *Handler {
 	}
 	return &Handler{Sessions: sessions, Ledger: ledger, Audit: auditStore,
 		Provisioner: sandbox.Noop{}, Config: cfg}
+}
+
+// stubAuth authenticates every request as whatever identity is registered
+// under the bearer token — enough to exercise per-caller authorization
+// without pulling in auth.Tokens' file-and-digest machinery.
+type stubAuth struct {
+	byToken map[string]auth.Identity
+}
+
+func (s stubAuth) Authenticate(r *http.Request) (auth.Identity, error) {
+	tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	id, ok := s.byToken[tok]
+	if !ok {
+		return auth.Identity{}, auth.ErrUnauthenticated
+	}
+	return id, nil
+}
+
+func (s stubAuth) Describe() string { return "stub" }
+
+// budgetAuthHandler builds a handler with a small budget hierarchy —
+// org → team → user (Alice's chain) and org → team2 → user2 (Bob's, a
+// sibling) — plus a stub authenticator so tests can act as distinct callers.
+func budgetAuthHandler(t *testing.T) *Handler {
+	t.Helper()
+	h := testHandler(t, Config{AgentImages: map[string]string{"claude": "img"}, GatewayURL: "http://gw"})
+	for _, b := range []budget.Budget{
+		{ID: "org", Name: "org", LimitUSD: 1000},
+		{ID: "team", ParentID: "org", Name: "team", LimitUSD: 500},
+		{ID: "user", ParentID: "team", Name: "user", LimitUSD: 100},
+		{ID: "team2", ParentID: "org", Name: "team2", LimitUSD: 500},
+		{ID: "user2", ParentID: "team2", Name: "user2", LimitUSD: 100},
+	} {
+		if err := h.Ledger.Create(b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.Auth = stubAuth{byToken: map[string]auth.Identity{
+		"alice": {Subject: "alice"},
+		"bob":   {Subject: "bob"},
+		"root":  {Subject: "root", Groups: []string{auth.GroupAdmin}},
+	}}
+	return h
+}
+
+// createSessionAs creates a session authenticated as the given stub token,
+// referencing budgetID.
+func createSessionAs(t *testing.T, h *Handler, token, budgetID string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/v1/sessions",
+		strings.NewReader(`{"agent":"claude","budget_id":"`+budgetID+`"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+// budgetsReq issues an authenticated GET against a budgets endpoint.
+func budgetsReq(t *testing.T, h *Handler, token, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("GET", path, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.Handler().ServeHTTP(rec, req)
+	return rec
 }
 
 func createSessionReq(t *testing.T, h *Handler, agent string) *httptest.ResponseRecorder {
@@ -161,5 +227,94 @@ func TestListSessionsHidesStoppedByDefault(t *testing.T) {
 	all := listedIDs(t, h, "/v1/sessions?all=1")
 	if !all[running] || !all[stopped] {
 		t.Errorf("ls --all must show both; got running=%v stopped=%v", all[running], all[stopped])
+	}
+}
+
+// A non-admin's budget list is exactly their own spend chain — their
+// session's budget plus every ancestor — never a sibling team's, and never
+// the unrelated flat "b1" budget testHandler always seeds.
+func TestListBudgetsNonAdminSeesOnlyOwnChain(t *testing.T) {
+	h := budgetAuthHandler(t)
+	if rec := createSessionAs(t, h, "alice", "user"); rec.Code != http.StatusCreated {
+		t.Fatalf("create session: %d %s", rec.Code, rec.Body)
+	}
+
+	rec := budgetsReq(t, h, "alice", "/v1/budgets")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list budgets: %d %s", rec.Code, rec.Body)
+	}
+	var out []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, b := range out {
+		got[b["id"].(string)] = true
+	}
+	want := map[string]bool{"user": true, "team": true, "org": true}
+	if len(got) != len(want) {
+		t.Fatalf("got budgets %v, want exactly %v", got, want)
+	}
+	for id := range want {
+		if !got[id] {
+			t.Errorf("missing %s in non-admin's list", id)
+		}
+	}
+}
+
+// An admin sees every budget, including ones no session references.
+func TestListBudgetsAdminSeesAll(t *testing.T) {
+	h := budgetAuthHandler(t)
+	if rec := createSessionAs(t, h, "alice", "user"); rec.Code != http.StatusCreated {
+		t.Fatalf("create session: %d %s", rec.Code, rec.Body)
+	}
+
+	rec := budgetsReq(t, h, "root", "/v1/budgets")
+	var out []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 6 { // b1, org, team, user, team2, user2
+		t.Fatalf("admin should see all 6 budgets, got %d: %v", len(out), out)
+	}
+}
+
+// getBudget returns 404 — not 403 — for a budget outside the caller's
+// visible set, exercising a sibling leaf, a sibling's own ancestor path, a
+// 2-hop-away ancestor that IS visible, and the caller's own leaf.
+func TestGetBudgetOutOfScopeIs404(t *testing.T) {
+	h := budgetAuthHandler(t)
+	if rec := createSessionAs(t, h, "alice", "user"); rec.Code != http.StatusCreated {
+		t.Fatalf("create session: %d %s", rec.Code, rec.Body)
+	}
+
+	for _, tc := range []struct {
+		id   string
+		want int
+	}{
+		{"user", http.StatusOK},        // own leaf
+		{"team", http.StatusOK},        // own parent
+		{"org", http.StatusOK},         // 2-hop ancestor, verifies multi-hop expansion
+		{"team2", http.StatusNotFound}, // sibling team, not an ancestor of alice's chain
+		{"user2", http.StatusNotFound}, // sibling leaf
+		{"b1", http.StatusNotFound},    // unrelated flat budget
+	} {
+		if rec := budgetsReq(t, h, "alice", "/v1/budgets/"+tc.id); rec.Code != tc.want {
+			t.Errorf("GET /v1/budgets/%s = %d, want %d (body %q)", tc.id, rec.Code, tc.want, rec.Body)
+		}
+	}
+}
+
+// A user with no sessions has an empty visible set: listBudgets is empty and
+// every getBudget is a 404, even for the org root.
+func TestBudgetVisibilityEmptyForUserWithNoSessions(t *testing.T) {
+	h := budgetAuthHandler(t) // bob never creates a session
+
+	rec := budgetsReq(t, h, "bob", "/v1/budgets")
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Errorf("list = %d %q, want 200 []", rec.Code, rec.Body.String())
+	}
+	if rec := budgetsReq(t, h, "bob", "/v1/budgets/org"); rec.Code != http.StatusNotFound {
+		t.Errorf("get org = %d, want 404 for a user with no sessions", rec.Code)
 	}
 }

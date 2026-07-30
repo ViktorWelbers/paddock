@@ -131,6 +131,58 @@ func TestRemainingIsTightestNode(t *testing.T) {
 	}
 }
 
+func TestVisibleFromExpandsAncestors(t *testing.T) {
+	l := testLedger(t)
+	seedHierarchy(t, l)
+	if err := l.Create(Budget{ID: "team2", ParentID: "org", Name: "team2", LimitUSD: 50}); err != nil {
+		t.Fatal(err)
+	}
+
+	visible, err := l.VisibleFrom([]string{"user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"user", "team", "org"} {
+		if !visible[want] {
+			t.Errorf("missing %s in visible set: %v", want, visible)
+		}
+	}
+	if visible["team2"] {
+		t.Error("sibling team2 must not be visible")
+	}
+}
+
+func TestVisibleFromSkipsMissingBudget(t *testing.T) {
+	l := testLedger(t)
+	seedHierarchy(t, l)
+	// Simulate a session whose budget was since deleted from the ledger.
+	if _, err := l.db.Exec(`DELETE FROM budgets WHERE id = ?`, "user"); err != nil {
+		t.Fatal(err)
+	}
+	visible, err := l.VisibleFrom([]string{"user", "team"})
+	if err != nil {
+		t.Fatalf("a missing leaf should be skipped, not error: %v", err)
+	}
+	if visible["user"] {
+		t.Error("deleted budget should not appear in the visible set")
+	}
+	if !visible["team"] || !visible["org"] {
+		t.Error("other valid leaves should still expand normally")
+	}
+}
+
+func TestVisibleFromEmptyInput(t *testing.T) {
+	l := testLedger(t)
+	seedHierarchy(t, l)
+	visible, err := l.VisibleFrom(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(visible) != 0 {
+		t.Errorf("no leaves should mean no visible budgets, got %v", visible)
+	}
+}
+
 func TestUnknownModelBillsAtMostExpensive(t *testing.T) {
 	pt := PriceTable{
 		"cheap":  {InputPerMTok: 1, OutputPerMTok: 2},
