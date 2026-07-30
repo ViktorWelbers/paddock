@@ -31,6 +31,10 @@ const (
 	// The developer's commit-signing key was installed in a sandbox. The
 	// method and key id are recorded; the private key material never is.
 	KindGitSigning = "git.signing.configured"
+	// The developer's git user.name/user.email were configured in a sandbox,
+	// so local commits are attributed correctly. Not a secret: the repo's own
+	// commit history already shows them.
+	KindGitIdentity = "git.identity.configured"
 	// Reconciliation: a sandbox no session owned was destroyed, or a session
 	// whose sandbox had vanished was marked failed.
 	KindSandboxReaped   = "sandbox.reaped"

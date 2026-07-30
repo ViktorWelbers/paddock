@@ -272,6 +272,14 @@ func runSession(agent string, detach, push, gitCreds, gitSigning bool) error {
 		}
 	}
 
+	// Git identity is not a secret — the repo's own history already shows it
+	// — so this always runs, independent of --no-git-credentials: even an
+	// agent that cannot push should still attribute its local commits to the
+	// developer instead of git's own fallback identity.
+	if err := pushGitIdentity(sess.ID, "."); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not configure git identity: %v\n", err)
+	}
+
 	// The repo came up; its credentials should too, or the agent can read the
 	// developer's code and do nothing with it — no fetch, no push, no PR.
 	// Same reasoning as the workspace: doing this per session by hand is the
