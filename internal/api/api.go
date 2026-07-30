@@ -131,8 +131,13 @@ type Config struct {
 	OpenAIURL      string            // OpenAI-path gateway URL for openai-completions agents
 	OpenAIModel    string            // model id pinned for those agents (empty = not configured)
 	EgressProxyURL string            // gateway CONNECT proxy for governed egress (empty = no egress)
-	WorkspaceSize  string            // /workspace emptyDir size limit (empty = sandbox default)
-	Namespace      string            // namespace the sandboxes run in (the server's own)
+	// ClaudeOAuthSecret names a Secret holding CLAUDE_CODE_OAUTH_TOKEN. Set it
+	// to run the claude agent on a Claude subscription (direct to
+	// api.anthropic.com through the egress proxy) instead of the gateway's
+	// metered API-key path. Empty = gateway mode.
+	ClaudeOAuthSecret string
+	WorkspaceSize     string // /workspace emptyDir size limit (empty = sandbox default)
+	Namespace         string // namespace the sandboxes run in (the server's own)
 	// Placement pins sandboxes to the nodes the operator set aside for them.
 	Placement sandbox.Placement
 }
@@ -316,6 +321,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 		OpenAIURL:          h.Config.OpenAIURL,
 		Model:              h.Config.OpenAIModel,
 		SessionToken:       sess.Token,
+		ClaudeOAuthSecret:  h.Config.ClaudeOAuthSecret,
 		EgressProxyURL:     h.Config.EgressProxyURL,
 		WorkspaceSizeLimit: h.Config.WorkspaceSize,
 		Placement:          h.Config.Placement,

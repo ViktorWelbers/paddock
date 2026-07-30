@@ -31,6 +31,15 @@ sandbox:
   tolerations: []
   runtimeClassName: ""
   priorityClassName: ""
+  # Run the claude agent on a Claude *subscription* instead of the gateway's
+  # metered API-key path. Set this to the name of a Secret holding key
+  # CLAUDE_CODE_OAUTH_TOKEN (mint it with `claude setup-token`). Claude Code
+  # then talks directly to api.anthropic.com with that token — still through
+  # the governed egress proxy (allowlist api.anthropic.com below), just not
+  # metered, which is correct for a flat-rate subscription. The token is
+  # injected by reference, so it never enters the pod spec. Empty = gateway
+  # mode (see gateway.existingSecret for the API-key path).
+  claudeOAuthSecret: ""
 
 # Who may call the control-plane API. Sandboxes cannot reach it at all (their
 # NetworkPolicy is port-scoped to the gateway), so this is about humans and CI
@@ -125,6 +134,12 @@ gateway:
       #     - "*.github.com"
       #     - codeload.github.com
       #     - objects.githubusercontent.com
+      #   # Required when sandbox.claudeOAuthSecret runs claude on a
+      #   # subscription (Claude Code calls Anthropic directly through this
+      #   # proxy). console.anthropic.com covers OAuth token refresh.
+      #   anthropic:
+      #     - api.anthropic.com
+      #     - console.anthropic.com
   # Server-side MCP allowlist. Empty = MCP disabled. Each entry becomes part
   # of /mcp/registry.json; credential_env names a key in credentialsSecret.
   mcpRegistry:

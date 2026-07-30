@@ -340,6 +340,52 @@ func TestRenderPiAgentEnv(t *testing.T) {
 	}
 }
 
+func TestRenderClaudeSubscriptionMode(t *testing.T) {
+	spec := testSpec()
+	spec.ClaudeOAuthSecret = "paddock-claude-oauth"
+	spec.EgressProxyURL = "http://paddock-gateway.paddock.svc:8082"
+
+	res, err := Render(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var oauth *corev1.EnvVar
+	names := map[string]bool{}
+	for i := range res.Pod.Spec.Containers[0].Env {
+		e := &res.Pod.Spec.Containers[0].Env[i]
+		names[e.Name] = true
+		if e.Name == "CLAUDE_CODE_OAUTH_TOKEN" {
+			oauth = e
+		}
+	}
+
+	// The subscription token must be injected by reference, never inlined, so
+	// it stays out of the pod spec and etcd.
+	if oauth == nil {
+		t.Fatal("subscription mode must set CLAUDE_CODE_OAUTH_TOKEN")
+	}
+	if oauth.Value != "" {
+		t.Errorf("CLAUDE_CODE_OAUTH_TOKEN must not be inlined; got value %q", oauth.Value)
+	}
+	if r := oauth.ValueFrom; r == nil || r.SecretKeyRef == nil ||
+		r.SecretKeyRef.Name != "paddock-claude-oauth" || r.SecretKeyRef.Key != "CLAUDE_CODE_OAUTH_TOKEN" {
+		t.Errorf("token must come from secretKeyRef{paddock-claude-oauth, CLAUDE_CODE_OAUTH_TOKEN}; got %+v", oauth.ValueFrom)
+	}
+
+	// Direct mode: no gateway base URL / session key on the Anthropic path, or
+	// Claude Code would send its OAuth request to the gateway and break.
+	if names["ANTHROPIC_BASE_URL"] || names["ANTHROPIC_API_KEY"] {
+		t.Error("subscription mode must not set ANTHROPIC_BASE_URL/ANTHROPIC_API_KEY")
+	}
+
+	// The direct call to api.anthropic.com still leaves only through the
+	// governed egress proxy, so it stays allowlisted and audited.
+	if !names["HTTPS_PROXY"] {
+		t.Error("subscription mode must keep the egress proxy env (governed egress)")
+	}
+}
+
 func TestRenderPiRequiresOpenAIConfig(t *testing.T) {
 	spec := testSpec()
 	spec.Agent = "pi"

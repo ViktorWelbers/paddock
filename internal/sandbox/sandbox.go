@@ -56,8 +56,16 @@ type Spec struct {
 	OpenAIURL    string // OpenAI-path gateway URL (for agents speaking openai-completions)
 	Model        string // model id for agents that need one pinned (pi against vLLM)
 	SessionToken string // session-scoped credential; never a real provider key
-	CPULimit     string // ceiling a session may burst to, e.g. "2"
-	MemLimit     string // e.g. "4Gi"
+	// ClaudeOAuthSecret names a Secret holding CLAUDE_CODE_OAUTH_TOKEN. When
+	// set, the claude agent runs in subscription/direct mode: it authenticates
+	// to api.anthropic.com with the developer's Claude subscription token
+	// instead of the gateway's metered API-key path (a subscription OAuth token
+	// is a different auth scheme the gateway can't proxy). Empty = gateway mode.
+	// The token is injected by reference (secretKeyRef), so it never lands in
+	// the pod spec or etcd — same posture as the gateway's own provider key.
+	ClaudeOAuthSecret string
+	CPULimit          string // ceiling a session may burst to, e.g. "2"
+	MemLimit          string // e.g. "4Gi"
 	// Reserved floor, deliberately well under the limit: a coding agent is
 	// bursty and idle most of the time, so reserving the whole limit would
 	// strand cores it rarely uses and (as it did on a two-node cluster) leave
@@ -104,10 +112,29 @@ func agentEnv(spec Spec) []corev1.EnvVar {
 			corev1.EnvVar{Name: "PI_API_KEY", Value: spec.SessionToken},
 		)
 	default: // claude
-		env = append(env,
-			corev1.EnvVar{Name: "ANTHROPIC_BASE_URL", Value: spec.GatewayURL},
-			corev1.EnvVar{Name: "ANTHROPIC_API_KEY", Value: spec.SessionToken},
-		)
+		if spec.ClaudeOAuthSecret != "" {
+			// Subscription/direct mode. Claude Code authenticates to
+			// api.anthropic.com with the developer's Claude subscription token,
+			// pulled by reference so the token never enters the pod spec. No
+			// ANTHROPIC_BASE_URL: Claude Code uses its default endpoint instead
+			// of the gateway (which speaks API keys, not subscription OAuth).
+			// The call still leaves only through the governed egress proxy set
+			// up by proxyEnv below, so it stays allowlisted and audited.
+			env = append(env, corev1.EnvVar{
+				Name: "CLAUDE_CODE_OAUTH_TOKEN",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: spec.ClaudeOAuthSecret},
+						Key:                  "CLAUDE_CODE_OAUTH_TOKEN",
+					},
+				},
+			})
+		} else {
+			env = append(env,
+				corev1.EnvVar{Name: "ANTHROPIC_BASE_URL", Value: spec.GatewayURL},
+				corev1.EnvVar{Name: "ANTHROPIC_API_KEY", Value: spec.SessionToken},
+			)
+		}
 	}
 	env = append(env, proxyEnv(spec)...)
 	return env

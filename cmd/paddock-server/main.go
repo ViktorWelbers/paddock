@@ -38,6 +38,7 @@ func main() {
 	openaiURL := flag.String("openai-gateway-url", "http://paddock-gateway.paddock.svc:8081/openai/v1", "gateway base URL for openai-completions agents (pi)")
 	openaiModel := flag.String("openai-model", "", "model id served by the gateway's OpenAI upstream (required to run the pi agent)")
 	egressProxyURL := flag.String("egress-proxy-url", "", "gateway CONNECT proxy URL injected as HTTP(S)_PROXY into sandboxes (empty = sandboxes get no egress)")
+	claudeOAuthSecret := flag.String("claude-oauth-secret", "", "name of a Secret holding CLAUDE_CODE_OAUTH_TOKEN; set it to run the claude agent on a Claude subscription (direct to api.anthropic.com through the egress proxy) instead of the gateway's metered API-key path")
 	workspaceSize := flag.String("workspace-size-limit", "2Gi", "size limit of the per-session /workspace volume")
 	nodeSelector := flag.String("sandbox-node-selector", "", `JSON object pinning sandboxes to nodes, e.g. {"paddock.dev/agents":"true"}`)
 	tolerations := flag.String("sandbox-tolerations", "", `JSON array of tolerations, e.g. [{"key":"paddock.dev/agents","operator":"Exists","effect":"NoSchedule"}]`)
@@ -94,13 +95,14 @@ func main() {
 		Exec:        execer,
 		Auth:        authenticator,
 		Config: api.Config{
-			Namespace:      ns,
-			AgentImages:    agentImageMap(*agentImage, *agentImages),
-			GatewayURL:     *gatewayURL,
-			OpenAIURL:      *openaiURL,
-			OpenAIModel:    *openaiModel,
-			EgressProxyURL: *egressProxyURL,
-			WorkspaceSize:  *workspaceSize,
+			Namespace:         ns,
+			AgentImages:       agentImageMap(*agentImage, *agentImages),
+			GatewayURL:        *gatewayURL,
+			OpenAIURL:         *openaiURL,
+			OpenAIModel:       *openaiModel,
+			EgressProxyURL:    *egressProxyURL,
+			ClaudeOAuthSecret: *claudeOAuthSecret,
+			WorkspaceSize:     *workspaceSize,
 			Placement: sandbox.Placement{
 				NodeSelector:      parseJSONFlag[map[string]string]("sandbox-node-selector", *nodeSelector),
 				Tolerations:       parseJSONFlag[[]corev1.Toleration]("sandbox-tolerations", *tolerations),

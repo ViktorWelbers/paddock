@@ -82,6 +82,9 @@ spec:
             - --egress-proxy-url=http://{{ .Release.Name }}-gateway.{{ .Release.Namespace }}.svc:{{ .Values.gateway.egress.port }}
             {{- end }}
             - --workspace-size-limit={{ .Values.server.workspaceSizeLimit }}
+            {{- with .Values.sandbox.claudeOAuthSecret }}
+            - --claude-oauth-secret={{ . }}
+            {{- end }}
             {{- with .Values.sandbox.nodeSelector }}
             - --sandbox-node-selector={{ toJson . }}
             {{- end }}
