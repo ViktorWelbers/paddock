@@ -4,6 +4,9 @@ bin/
 /paddock-server
 /paddock-gateway
 docs/internal/
+# Private homelab/dev notes for the maintainer's cluster (internal registry,
+# GitOps repo, deploy runbook). Public onboarding lives in AGENTS.md.
+/CLAUDE.md
 *.db
 *.sqlite
 .DS_Store
