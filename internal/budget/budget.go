@@ -5,6 +5,7 @@ package budget
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -133,12 +134,19 @@ func (l *Ledger) List() ([]Budget, error) {
 	return out, rows.Err()
 }
 
+// queryRower is satisfied by *sql.DB and *sql.Tx, so chain can walk the
+// ancestor hierarchy either inside a transaction (Debit, Remaining) or
+// directly against the database (VisibleFrom).
+type queryRower interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
 // chain returns the budget and all its ancestors, leaf first.
-func (l *Ledger) chain(tx *sql.Tx, id string) ([]Budget, error) {
+func (l *Ledger) chain(q queryRower, id string) ([]Budget, error) {
 	var out []Budget
 	for id != "" {
 		var b Budget
-		err := tx.QueryRow(
+		err := q.QueryRow(
 			`SELECT id, parent_id, name, limit_usd, spent_usd FROM budgets WHERE id = ?`, id,
 		).Scan(&b.ID, &b.ParentID, &b.Name, &b.LimitUSD, &b.SpentUSD)
 		if err != nil {
@@ -151,6 +159,31 @@ func (l *Ledger) chain(tx *sql.Tx, id string) ([]Budget, error) {
 		id = b.ParentID
 	}
 	return out, nil
+}
+
+// VisibleFrom expands a set of leaf budget IDs — typically the budgets a
+// user's own sessions reference — up their ParentID ancestor chains: the
+// caller's own budgets plus every ancestor, never a sibling's. A leaf that
+// no longer exists (its session's budget was since deleted) is skipped
+// rather than treated as an error.
+func (l *Ledger) VisibleFrom(ids []string) (map[string]bool, error) {
+	visible := map[string]bool{}
+	for _, id := range ids {
+		if visible[id] {
+			continue
+		}
+		nodes, err := l.chain(l.db, id)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return nil, err
+		}
+		for _, b := range nodes {
+			visible[b.ID] = true
+		}
+	}
+	return visible, nil
 }
 
 // Debit prices the call and atomically debits the budget and every ancestor.
