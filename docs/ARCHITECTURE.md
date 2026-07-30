@@ -10,6 +10,8 @@
 
 Both server and gateway are single static Go binaries. MVP storage is SQLite (one file, zero-dependency self-hosting); the storage layer is small and Postgres is a straight swap when multi-replica is needed.
 
+![Paddock architecture overview](img/architecture.png)
+
 ## Session lifecycle
 
 1. `paddock run claude` → `POST /v1/sessions` on `paddock-server`.
@@ -32,15 +34,7 @@ The one thing the shared namespace takes away is the per-session `ResourceQuota`
 
 For each model API request:
 
-```
-sandbox ── session token ──▶ gateway
-                              1. authenticate session token → session, budget
-                              2. budget check: hard cap → 402 Payment Required
-                              3. swap in real provider key (from broker), proxy upstream
-                              4. parse `usage` from response (JSON or SSE message_delta)
-                              5. price via model price table → debit ledger
-                              6. append audit event (model, tokens, cost, session)
-```
+![Gateway data path — model API request](img/flow-gateway.png)
 
 Streaming: Anthropic SSE responses carry usage in `message_start` / `message_delta` events; the gateway scans the stream as it relays it. Non-streaming responses carry a top-level `usage` object.
 
@@ -48,28 +42,13 @@ Streaming: Anthropic SSE responses carry usage in `message_start` / `message_del
 
 For each MCP call:
 
-```
-sandbox ──▶ gateway /mcp/{server}
-             1. server on allowlist? (central registry, not developer YAML)
-             2. OPA decision: input {user, session, server, tool, args} → allow/deny
-             3. inject server credentials (broker) — sandbox never holds them
-             4. relay, append audit event with the decision
-```
+![Gateway data path — MCP call](img/flow-mcp.png)
 
 ## Egress data path
 
 The sandbox has no route to the internet; the gateway has the only door. Agents get `HTTP_PROXY`/`HTTPS_PROXY` (and the lowercase forms — curl reads only those) pointing at the gateway's CONNECT proxy, authenticated with the session token. `NO_PROXY` covers the gateway host, or model calls would tunnel through the proxy back into the gateway they came from.
 
-```
-sandbox ── CONNECT pypi.org:443 ──▶ gateway :8082
-                                     1. Proxy-Authorization → session (407 if not)
-                                     2. host → allowlist groups (deny if none)
-                                     3. port allowed? (443 by default)
-                                     4. OPA: {kind:"egress", user, agent, host, port, groups}
-                                     5. resolve DNS *here*, reject loopback/link-local/
-                                        RFC1918/CGNAT/ULA — then dial the vetted IP
-                                     6. 200, splice bytes, audit allowed/closed(+bytes)
-```
+![Egress data path — governed CONNECT proxy](img/flow-egress.png)
 
 Three properties are worth stating plainly:
 
@@ -81,10 +60,7 @@ Three properties are worth stating plainly:
 
 Files move through the **server**, never the CLI's own cluster access:
 
-```
-paddock run/push ── tar.gz ──▶ server ── pods/exec: tar -xzf - -C /workspace ──▶ sandbox
-paddock pull     ◀── tar.gz ── server ◀── pods/exec: tar -czf - -C /workspace .
-```
+![Workspace transfer — through the server](img/flow-workspace.png)
 
 Streamed end to end — the request body is piped into the pod's stdin, so a large repo never lands in anyone's memory — and both directions are audited with byte counts and a sha256. The developer needs no kubeconfig and no `pods/exec` rights; the server holds them, which is the same trade `attach` will make once the websocket relay lands.
 
@@ -98,12 +74,7 @@ An agent that can read the code but not `git push` is half a tool, so `paddock r
 
 The credential is the developer's own and the agent works as the developer, so it is not a secret *from the agent*. It must, however, be a secret *from the control plane*: paddock operates the cluster, so an injection streamed in the clear would sit in server memory and in whatever records the kube API server's exec channel. So the handoff is encrypted end to end, and the plaintext never transits paddock:
 
-```
-pod: age-keygen ─▶ private key stays in the pod           (never leaves)
-CLI: GET  /git-recipient  ◀── age1… public recipient ──── server ──exec: age-keygen -y ──▶ pod
-CLI: encrypt cred file to age1…, POST /git-credentials {ciphertext, hosts}
-     ── ciphertext ──▶ server ── exec: age -d -i key > ~/.git-credentials ──▶ pod
-```
+![Git credentials — encrypted handoff](img/flow-gitcreds.png)
 
 The pod generates an `age` (X25519) keypair on first ask and keeps the private half; the server only ever handles the public recipient and the opaque ciphertext. Only the pod can open it. The credential lands `0600` in the agent's home under git's own `store` helper — not in the pod spec, not in etcd, not in the workspace the agent might commit. Every injection is audited by host and username; **never the secret** (which the server cannot see anyway). The boundary this draws is passive exposure — capture in transit or at rest in the control plane — not paddock itself, which can already exec into the pod; repo-scoped, short-lived tokens remain the answer to "the agent can use what it can read". `--no-git-credentials` opts out. One caveat: a token baked directly into a remote URL in `.git/config` still rides along in the workspace tar in the clear, so prefer a credential helper — which is the source the harvest reads.
 

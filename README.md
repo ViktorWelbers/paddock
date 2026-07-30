@@ -27,25 +27,12 @@ Paddock gives the platform team a single control point:
 
 ## Architecture (30 seconds)
 
-```
- developer                    control plane                    data plane
- ─────────                    ─────────────                    ──────────
- paddock run claude ───────▶  paddock-server ──── spawns ───▶  sandbox pod
-   (uploads your cwd)         │  sessions              (Claude Code; the only
-                              │  budgets                route out is the gateway)
-                              │  audit log                     │
-                              │  workspace ──── tar ──────────▶│ /workspace
-                              │                                │
-                              │        policy (OPA) ◀──────────┤ ANTHROPIC_BASE_URL
-                              │        budget check ◀──────────┤ HTTPS_PROXY
-                              ▼                                ▼
-                          SQLite/Postgres              paddock-gateway
-                                                       │ token metering
-                                                       │ MCP mux + credential broker
-                                                       │ egress proxy (allowlist)
-                                                       ▼
-                                     model APIs / MCP servers / package registries
-```
+![Paddock architecture overview](docs/img/architecture.png)
+
+The developer's `paddock` CLI talks only to `paddock-server` (control plane); the
+sandbox pod can reach nothing but `paddock-gateway` (data plane), which meters
+model spend, brokers credentials, and governs egress. See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the per-path detail.
 
 ## Quickstart (k3d, ~5 minutes)
 
