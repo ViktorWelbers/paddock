@@ -40,6 +40,19 @@ RUN groupadd -g 10001 agent \
 # agent's own by construction, so declare it trusted.
 RUN git config --system --add safe.directory /workspace
 
+# Pre-seed Claude Code's first-launch state so `paddock run claude` drops
+# straight into a session. On a Claude subscription the sandbox authenticates
+# with CLAUDE_CODE_OAUTH_TOKEN, but the interactive TUI's first-launch wizard
+# still shows the "Select login method" screen unless onboarding is already
+# marked complete (it auto-skips that screen only for ANTHROPIC_API_KEY, not
+# for the OAuth token). hasCompletedOnboarding skips the wizard; the token then
+# authenticates transparently. We also pre-accept the folder-trust prompt for
+# /workspace -- it holds the developer's own uploaded repo, in an
+# already-isolated sandbox, so trusting it by default is safe.
+RUN printf '{"hasCompletedOnboarding":true,"projects":{"/workspace":{"hasTrustDialogAccepted":true,"allowedTools":[]}}}\n' \
+      > /home/agent/.claude.json \
+ && chown 10001:10001 /home/agent/.claude.json
+
 ENV HOME=/home/agent \
     TERM=xterm-256color \
     DISABLE_AUTOUPDATER=1 \
