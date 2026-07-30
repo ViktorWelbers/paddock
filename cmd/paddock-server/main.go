@@ -48,6 +48,8 @@ func main() {
 	namespace := flag.String("sandbox-namespace", "", "namespace sandboxes run in (empty = this pod's own, which is what the chart's Role grants; only set this if you bound the provisioner Role elsewhere)")
 	seedBudgetUSD := flag.Float64("seed-budget-usd", 25, "create a 'default' budget with this limit if none exists (dev convenience, 0 disables)")
 	maxSessionAge := flag.Duration("max-session-age", 0, "tear down sessions older than this and invalidate their tokens (0 = never; a sandbox then lives until `paddock rm`)")
+	maxSessionsPerUser := flag.Int("max-sessions-per-user", 0, "cap concurrent running sessions per user (0 = unlimited); a rejected create gets 429")
+	maxSessionsTotal := flag.Int("max-sessions-total", 0, "cap concurrent running sessions across the whole server (0 = unlimited); a rejected create gets 429")
 	authTokens := flag.String("auth-tokens", "", "JSON file of bearer tokens identifying API callers")
 	authDisabled := flag.Bool("auth-disabled", false, "serve the API with no authentication at all — every caller owns every session (laptops and CI only)")
 	flag.Parse()
@@ -95,14 +97,16 @@ func main() {
 		Exec:        execer,
 		Auth:        authenticator,
 		Config: api.Config{
-			Namespace:         ns,
-			AgentImages:       agentImageMap(*agentImage, *agentImages),
-			GatewayURL:        *gatewayURL,
-			OpenAIURL:         *openaiURL,
-			OpenAIModel:       *openaiModel,
-			EgressProxyURL:    *egressProxyURL,
-			ClaudeOAuthSecret: *claudeOAuthSecret,
-			WorkspaceSize:     *workspaceSize,
+			Namespace:          ns,
+			AgentImages:        agentImageMap(*agentImage, *agentImages),
+			GatewayURL:         *gatewayURL,
+			OpenAIURL:          *openaiURL,
+			OpenAIModel:        *openaiModel,
+			EgressProxyURL:     *egressProxyURL,
+			ClaudeOAuthSecret:  *claudeOAuthSecret,
+			WorkspaceSize:      *workspaceSize,
+			MaxSessionsPerUser: *maxSessionsPerUser,
+			MaxSessionsTotal:   *maxSessionsTotal,
 			Placement: sandbox.Placement{
 				NodeSelector:      parseJSONFlag[map[string]string]("sandbox-node-selector", *nodeSelector),
 				Tolerations:       parseJSONFlag[[]corev1.Toleration]("sandbox-tolerations", *tolerations),

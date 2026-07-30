@@ -91,10 +91,13 @@ Then:
       its pod's CPU and memory until someone runs `paddock rm`. Needs a
       last-activity timestamp (the gateway already sees every call) and a
       configurable TTL.
-- [ ] **Concurrent-session ceiling.** The per-session `ResourceQuota` went away
+- [x] **Concurrent-session ceiling.** The per-session `ResourceQuota` went away
       with the per-session namespace, so "how many sandboxes may this cluster
-      run" is now a server-side check nobody has written. Per-user and global
-      caps at session-create, plus a clear 429.
+      run" is now a server-side check at session-create: `--max-sessions-per-user`
+      and `--max-sessions-total` (chart `server.maxSessionsPerUser` /
+      `maxSessionsTotal`, 0 = unlimited) count running sessions and reject past
+      the cap with a 429 that names which limit was hit. Applies to admins too —
+      the cap is physical capacity, not authorization.
 - [x] **Runs under Pod Security Admission `restricted`** — sandboxes and the
       control plane both, verified against a real API server. A sandbox missing
       `seccompProfile` is not degraded, it is `Forbidden`, so every `paddock

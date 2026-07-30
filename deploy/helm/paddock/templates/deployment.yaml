@@ -104,6 +104,12 @@ spec:
             {{- with .Values.server.maxSessionAge }}
             - --max-session-age={{ . }}
             {{- end }}
+            {{- with .Values.server.maxSessionsPerUser }}
+            - --max-sessions-per-user={{ . }}
+            {{- end }}
+            {{- with .Values.server.maxSessionsTotal }}
+            - --max-sessions-total={{ . }}
+            {{- end }}
             {{- if .Values.auth.existingSecret }}
             - --auth-tokens=/auth/tokens.json
             {{- else }}

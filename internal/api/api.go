@@ -125,6 +125,22 @@ func (s *Store) setStatus(id, status string) error {
 	return err
 }
 
+// countRunning reports how many sessions currently hold a sandbox. Only
+// running sessions occupy cluster capacity; terminal ones are history, so the
+// ceiling counts them out.
+func (s *Store) countRunning() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE status = 'running'`).Scan(&n)
+	return n, err
+}
+
+// countRunningByUser is countRunning scoped to one owner, for the per-user cap.
+func (s *Store) countRunningByUser(user string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE status = 'running' AND user = ?`, user).Scan(&n)
+	return n, err
+}
+
 // Config carries the server's sandbox defaults.
 type Config struct {
 	AgentImages    map[string]string // agent name → image, e.g. {"claude": ..., "pi": ...}
@@ -139,6 +155,13 @@ type Config struct {
 	ClaudeOAuthSecret string
 	WorkspaceSize     string // /workspace emptyDir size limit (empty = sandbox default)
 	Namespace         string // namespace the sandboxes run in (the server's own)
+	// MaxSessionsPerUser and MaxSessionsTotal cap how many sandboxes may run
+	// at once. The per-session ResourceQuota went away with the per-session
+	// namespace, so this is the only ceiling on how much compute one user — or
+	// one runaway script looping on POST /v1/sessions — can pin; the budget
+	// caps spend, not pods. 0 = unlimited.
+	MaxSessionsPerUser int
+	MaxSessionsTotal   int
 	// Placement pins sandboxes to the nodes the operator set aside for them.
 	Placement sandbox.Placement
 }
@@ -297,6 +320,34 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	if remaining <= 0 {
 		http.Error(w, "budget exhausted", http.StatusPaymentRequired)
 		return
+	}
+
+	// Concurrent-session ceilings. Checked here rather than enforced by a DB
+	// constraint: under a burst of simultaneous creates a small over-count is
+	// harmless, whereas a hard schema limit would turn the race into 500s.
+	// Applies to admins too — the cap is physical cluster capacity, not
+	// authorization; an operator who needs more raises the limit.
+	if capTotal := h.Config.MaxSessionsTotal; capTotal > 0 {
+		n, err := h.Sessions.countRunning()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if n >= capTotal {
+			http.Error(w, fmt.Sprintf("cluster session limit reached (%d running); try again once one ends", capTotal), http.StatusTooManyRequests)
+			return
+		}
+	}
+	if capUser := h.Config.MaxSessionsPerUser; capUser > 0 {
+		n, err := h.Sessions.countRunningByUser(id.Subject)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if n >= capUser {
+			http.Error(w, fmt.Sprintf("you already have %d running sessions (limit %d); end one with `paddock rm` first", n, capUser), http.StatusTooManyRequests)
+			return
+		}
 	}
 
 	sess := Session{

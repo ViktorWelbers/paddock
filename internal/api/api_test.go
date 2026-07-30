@@ -101,6 +101,47 @@ func listedIDs(t *testing.T, h *Handler, path string) map[string]bool {
 	return ids
 }
 
+// The per-session ResourceQuota went away with the per-session namespace, so
+// this ceiling is the only thing standing between a runaway `POST /v1/sessions`
+// loop and every node in the cluster. Past the cap, create is a 429; ending a
+// session frees the slot.
+func TestSessionCeilingPerUser(t *testing.T) {
+	h := testHandler(t, Config{
+		AgentImages:        map[string]string{"claude": "img"},
+		GatewayURL:         "http://gw",
+		MaxSessionsPerUser: 2,
+	})
+
+	first := sessionID(t, createSessionReq(t, h, "claude"))
+	sessionID(t, createSessionReq(t, h, "claude"))
+	if rec := createSessionReq(t, h, "claude"); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("over-cap create = %d, want 429 (body %q)", rec.Code, rec.Body.String())
+	}
+
+	// A terminal session no longer holds a sandbox, so the slot comes back.
+	if err := h.Sessions.setStatus(first, statusDeleted); err != nil {
+		t.Fatal(err)
+	}
+	if rec := createSessionReq(t, h, "claude"); rec.Code != http.StatusCreated {
+		t.Fatalf("after freeing a slot = %d, want 201 (body %q)", rec.Code, rec.Body.String())
+	}
+}
+
+// The total cap is a whole-server ceiling; unlike the per-user one it isn't
+// reset by spreading load across users (the test handler owns everything as one
+// anonymous subject anyway, so it exercises the count path directly).
+func TestSessionCeilingTotal(t *testing.T) {
+	h := testHandler(t, Config{
+		AgentImages:      map[string]string{"claude": "img"},
+		GatewayURL:       "http://gw",
+		MaxSessionsTotal: 1,
+	})
+	sessionID(t, createSessionReq(t, h, "claude"))
+	if rec := createSessionReq(t, h, "claude"); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("over-total-cap create = %d, want 429 (body %q)", rec.Code, rec.Body.String())
+	}
+}
+
 // Docker-like default: `paddock ls` shows only running sessions; `--all`
 // (?all=1) includes the stopped ones so the default view stays uncluttered.
 func TestListSessionsHidesStoppedByDefault(t *testing.T) {

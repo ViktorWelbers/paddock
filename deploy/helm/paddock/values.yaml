@@ -71,6 +71,14 @@ server:
   # disables it, and a session then lives until `paddock rm`. Blunt on purpose:
   # a coding sandbox is ephemeral, and this caps standing exposure and cost.
   maxSessionAge: "24h"
+  # Concurrent-session ceilings. With the per-session namespace gone, so is its
+  # ResourceQuota, so these are the only thing between a runaway `paddock run`
+  # loop and every node in the cluster. maxSessionsPerUser bounds one developer;
+  # maxSessionsTotal bounds the whole server. Past either, create returns 429.
+  # 0 = unlimited (the default, to stay backwards-compatible); set them to the
+  # number of sandboxes your nodes can actually hold.
+  maxSessionsPerUser: 0
+  maxSessionsTotal: 0
   resources: {}
 
 gateway:
