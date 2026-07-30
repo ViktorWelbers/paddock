@@ -25,7 +25,7 @@ Paddock gives the platform team a single control point:
 - **Policies** — OPA/Rego decisions on every tool call, MCP call, and egress connection. Your platform team already speaks Rego; reuse the pipelines and review process you have for Gatekeeper.
 - **Audit** — append-only event log of sessions, model calls, tool calls, egress, workspace transfers, and policy decisions, designed to back DORA / EU AI Act evidence requirements.
 
-## Architecture (30 seconds)
+## Architecture - HLD
 
 ![Paddock architecture overview](docs/img/architecture.png)
 
