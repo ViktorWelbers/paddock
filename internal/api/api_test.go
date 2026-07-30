@@ -2,6 +2,7 @@ package api
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -78,5 +79,46 @@ func TestCreateSessionRejectsPiWithoutOpenAIConfig(t *testing.T) {
 	})
 	if rec := createSessionReq(t, h, "pi"); rec.Code != http.StatusBadRequest {
 		t.Errorf("pi without openai config = %d, want 400", rec.Code)
+	}
+}
+
+// listedIDs returns the session IDs `paddock ls` would show for the given path.
+func listedIDs(t *testing.T, h *Handler, path string) map[string]bool {
+	t.Helper()
+	w := httptest.NewRecorder()
+	h.Handler().ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("list %s: %d %s", path, w.Code, w.Body)
+	}
+	var ss []Session
+	if err := json.Unmarshal(w.Body.Bytes(), &ss); err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, s := range ss {
+		ids[s.ID] = true
+	}
+	return ids
+}
+
+// Docker-like default: `paddock ls` shows only running sessions; `--all`
+// (?all=1) includes the stopped ones so the default view stays uncluttered.
+func TestListSessionsHidesStoppedByDefault(t *testing.T) {
+	h := testHandler(t, Config{AgentImages: map[string]string{"claude": "img"}, GatewayURL: "http://gw"})
+
+	running := sessionID(t, createSessionReq(t, h, "claude"))
+	stopped := sessionID(t, createSessionReq(t, h, "claude"))
+	if err := h.Sessions.setStatus(stopped, statusDeleted); err != nil {
+		t.Fatal(err)
+	}
+
+	def := listedIDs(t, h, "/v1/sessions")
+	if !def[running] || def[stopped] {
+		t.Errorf("default ls must show running and hide stopped; got running=%v stopped=%v", def[running], def[stopped])
+	}
+
+	all := listedIDs(t, h, "/v1/sessions?all=1")
+	if !all[running] || !all[stopped] {
+		t.Errorf("ls --all must show both; got running=%v stopped=%v", all[running], all[stopped])
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/viktorwelbers/paddock/internal/audit"
@@ -349,11 +350,18 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Like `docker ps`: only running sessions by default, everything with
+	// ?all=1. A terminal session (deleted/failed/expired) is history you
+	// can't attach to, so it only clutters the default view.
+	showAll, _ := strconv.ParseBool(r.URL.Query().Get("all"))
 	sessions := []Session{}
 	for _, s := range all {
 		// `paddock ls` is a developer's view of their own work; an admin
 		// gets the whole cluster.
 		if s.User != id.Subject && !id.IsAdmin() {
+			continue
+		}
+		if !showAll && s.Status != statusRunning {
 			continue
 		}
 		sessions = append(sessions, h.Config.locate(s))

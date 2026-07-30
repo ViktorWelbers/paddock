@@ -169,9 +169,16 @@ func pullCmd() *cli.Command {
 
 func lsCmd() *cli.Command {
 	return &cli.Command{
-		Name:   "ls",
-		Usage:  "list sessions",
-		Action: func(_ context.Context, _ *cli.Command) error { return listSessions() },
+		Name:  "ls",
+		Usage: "list running sessions (use --all to include stopped ones)",
+		Flags: []cli.Flag{
+			&cli.BoolFlag{
+				Name:    "all",
+				Aliases: []string{"a"},
+				Usage:   "include stopped sessions (deleted, failed, expired), like docker ps -a",
+			},
+		},
+		Action: func(_ context.Context, c *cli.Command) error { return listSessions(c.Bool("all")) },
 	}
 }
 
@@ -294,7 +301,7 @@ func runSession(agent string, detach, push, gitCreds, gitSigning bool) error {
 	return attachSession(sess.ID, []string{agent})
 }
 
-func listSessions() error {
+func listSessions(all bool) error {
 	var sessions []struct {
 		ID        string    `json:"id"`
 		User      string    `json:"user"`
@@ -303,8 +310,20 @@ func listSessions() error {
 		Status    string    `json:"status"`
 		CreatedAt time.Time `json:"created_at"`
 	}
-	if err := getJSON("/v1/sessions", &sessions); err != nil {
+	path := "/v1/sessions"
+	if all {
+		path += "?all=1"
+	}
+	if err := getJSON(path, &sessions); err != nil {
 		return err
+	}
+	if len(sessions) == 0 {
+		if all {
+			fmt.Println("no sessions yet")
+		} else {
+			fmt.Println("no running sessions (use --all to include stopped ones)")
+		}
+		return nil
 	}
 	w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "ID\tUSER\tAGENT\tBUDGET\tSTATUS\tCREATED")

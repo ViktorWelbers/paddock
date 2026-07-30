@@ -175,7 +175,7 @@ async function selectSession(id) {
 
 async function refresh(reloadEvents = true) {
   try {
-    const [budgets, sessions] = await Promise.all([get("/v1/budgets"), get("/v1/sessions")]);
+    const [budgets, sessions] = await Promise.all([get("/v1/budgets"), get("/v1/sessions?all=1")]);
     renderBudgets(budgets);
     renderSessions(sessions);
     if (reloadEvents && selected) selectSession(selected);
