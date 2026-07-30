@@ -234,7 +234,7 @@ toolchains, extend the image and point paddock at it — everything else stays
 the same:
 
 ```dockerfile
-FROM <your-registry>/paddock/agent-claude:latest
+FROM ghcr.io/viktorwelbers/agent-claude:latest
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends golang && rm -rf /var/lib/apt/lists/*
 USER 10001:10001
@@ -253,19 +253,16 @@ reachable.
 
 ## Deploying to your own cluster
 
-There are no published container images yet — build them from source and push
-to a registry your cluster can pull from:
+The images are published to GHCR (`ghcr.io/viktorwelbers/{paddock,agent-claude,agent-pi}`)
+and the chart points at them by default, so a basic install builds nothing:
 
 ```sh
-# 1. Build and push the images
-make push REGISTRY=<your-registry> TAG=$(git rev-parse --short HEAD)
-
-# 2. The real provider key lives in one Secret, gateway-side only
+# 1. Namespace + the real provider key (gateway-side only — never in a sandbox)
 kubectl create namespace paddock
 kubectl -n paddock create secret generic paddock-anthropic \
   --from-literal=ANTHROPIC_API_KEY=sk-ant-...
 
-# 3. Who may call the API. A subject owns the sessions it creates;
+# 2. Who may call the API. A subject owns the sessions it creates;
 #    paddock-admin sees everyone's.
 cat > tokens.json <<'JSON'
 {"users": [
@@ -275,16 +272,14 @@ cat > tokens.json <<'JSON'
 JSON
 kubectl -n paddock create secret generic paddock-api-tokens --from-file=tokens.json
 
-# 4. Recommended: hold paddock to the standard it asks of agents
+# 3. Recommended: hold paddock to the standard it asks of agents
 kubectl label namespace paddock \
   pod-security.kubernetes.io/enforce=restricted \
   pod-security.kubernetes.io/enforce-version=latest
 
-# 5. Install
+# 4. Install (pulls the public GHCR images by default)
 helm upgrade --install paddock deploy/helm/paddock -n paddock \
-  --set image.repository=<your-registry>/paddock/paddock \
-  --set image.tag=<tag> \
-  --set agentImage=<your-registry>/paddock/agent-claude:<tag> \
+  --set gateway.existingSecret=paddock-anthropic \
   --set auth.existingSecret=paddock-api-tokens
 ```
 
@@ -293,16 +288,32 @@ The chart will not install without an answer on authentication: either
 can reach it. Paddock exists to say who did what, so the choice is yours to
 make but not to skip.
 
+**Air-gapped, or want your own registry / a custom agent toolchain?** Build the
+three images and push them somewhere your cluster can pull from, then override
+the defaults:
+
+```sh
+make push REGISTRY=<your-registry> TAG=$(git rev-parse --short HEAD)
+helm upgrade --install paddock deploy/helm/paddock -n paddock \
+  --set image.repository=<your-registry>/paddock/paddock --set image.tag=<tag> \
+  --set agentImage=<your-registry>/paddock/agent-claude:<tag> \
+  --set gateway.existingSecret=paddock-anthropic --set auth.existingSecret=paddock-api-tokens
+# (if the registry uses a self-signed CA, trust it in Docker before pushing)
+```
+
 See `deploy/helm/paddock/values.yaml` for the full surface: ingress (put the
 server behind one; developers save the URL with `paddock config set server`),
 persistent SQLite, where agent workloads may run (`sandbox.nodeSelector`,
-`sandbox.tolerations`, `sandbox.runtimeClassName` for gVisor/Kata),
-an OpenAI-compatible upstream for pi (`gateway.openai.*`, including a
-`caConfigMap` for private CAs), and the server-side MCP registry. Serving only
-self-hosted models? Leave `gateway.existingSecret` empty and set
-`gateway.openai.upstream` — no Anthropic key required. An ArgoCD
-`Application` example lives in [`deploy/argocd/`](deploy/argocd). If your
-registry uses a self-signed CA, trust it in Docker before pushing.
+`sandbox.tolerations`, `sandbox.runtimeClassName` for gVisor/Kata), and the
+server-side MCP registry. For the model backend you have three choices, none
+mutually exclusive: an Anthropic key for metered Claude (`gateway.existingSecret`),
+a personal Claude subscription for the claude agent (`sandbox.claudeOAuthSecret`
+holding `CLAUDE_CODE_OAUTH_TOKEN` — direct and unmetered, still through the
+governed egress proxy), or an OpenAI-compatible upstream for pi
+(`gateway.openai.*`, `caConfigMap` for private CAs). Serving only self-hosted
+models? Leave `gateway.existingSecret` empty and set `gateway.openai.upstream` —
+no Anthropic key required. An ArgoCD `Application` example lives in
+[`deploy/argocd/`](deploy/argocd).
 
 ## Open core
 
