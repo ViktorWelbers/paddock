@@ -1,12 +1,12 @@
 # Sandbox agent image: Claude Code preinstalled, plus the toolchain a
-# developer expects to find (git, node, python3, make, jq).
+# developer expects to find (git, go, gh, node, python3, make, jq).
 #
 # The sandbox NetworkPolicy only allows egress to the paddock gateway, so
 # the base toolchain is baked in here. Dependencies are a different matter:
 # agents reach allowlisted registries through the gateway's egress proxy
-# (HTTP_PROXY is injected into the sandbox), so `pip install` and friends
-# work at runtime when the operator allows the domain. Nonessential agent
-# telemetry stays off regardless.
+# (HTTP_PROXY is injected into the sandbox), so `pip install`, `go get`, and
+# friends work at runtime when the operator allows the domain. Nonessential
+# agent telemetry stays off regardless.
 #
 # `age`, `gnupg`, and `openssh-client` are not developer toolchain: they are
 # how the pod receives the git secrets paddock hands off. `age` decrypts the
@@ -17,9 +17,28 @@
 # Contract with internal/sandbox: the entrypoint holds the pod alive;
 # `paddock attach` execs the agent with a TTY. Numeric USER because the
 # kubelet's RunAsNonRoot check rejects named users.
+
+# toolchain fetches pinned Go and gh binaries with curl -- curl itself must
+# never reach the final image (it is on the sandbox's network_tools denylist,
+# policies/sandbox_tools.rego: sanctioned egress is through governed package
+# managers, not a raw HTTP client), so the download happens in this throwaway
+# stage and only the resulting binaries get copied forward.
+FROM debian:bookworm-slim AS toolchain
+ARG GO_VERSION=1.26.4
+ARG GH_VERSION=2.63.0
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl \
+ && curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xz \
+ && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" -o /tmp/gh.tar.gz \
+ && tar -xzf /tmp/gh.tar.gz -C /tmp \
+ && mv "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
+
 FROM node:22-bookworm-slim
 
 ARG CLAUDE_CODE_VERSION=latest
+
+COPY --from=toolchain /usr/local/go /usr/local/go
+COPY --from=toolchain /usr/local/bin/gh /usr/local/bin/gh
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ripgrep tini procps ca-certificates \
@@ -58,7 +77,9 @@ ENV HOME=/home/agent \
     DISABLE_AUTOUPDATER=1 \
     DISABLE_TELEMETRY=1 \
     DISABLE_ERROR_REPORTING=1 \
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+    PATH="/usr/local/go/bin:${PATH}" \
+    GOPATH=/home/agent/go
 
 USER 10001:10001
 WORKDIR /workspace
