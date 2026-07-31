@@ -50,6 +50,9 @@ func main() {
 		Commands: []*cli.Command{
 			runCmd(),
 			attachCmd(),
+			execCmd(),
+			initLocalCmd(),
+			hookBashCmd(),
 			pushCmd(),
 			pullCmd(),
 			lsCmd(),
