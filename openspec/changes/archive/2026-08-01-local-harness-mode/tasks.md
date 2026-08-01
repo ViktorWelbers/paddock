@@ -31,7 +31,7 @@
 ## 6. Deploy + install for testing (private tooling stays out of the OSS repo)
 
 - [x] 6.1 Commit + push the CLI + docs; confirm CI is green (server image unchanged — CLI is client-only)
-- [ ] 6.2 Ensure the control plane is current via Argo (already v0.5.0; refresh if needed)
+- [x] 6.2 Ensure the control plane is current via Argo (already v0.5.0; refresh if needed)
 - [x] 6.3 Install the local CLI (`go install …/cmd/paddock@main`) and `devspace`
-- [ ] 6.4 Add a private `make` target (in the infrastructure repo, NOT the OSS repo) that runs the Argo refresh + local CLI/devspace install in one step
-- [ ] 6.5 Smoke test end-to-end: `paddock dev claude` → local Claude Code edits sync + Bash runs in the sandbox
+- [x] 6.4 Add a private `make` target (in the infrastructure repo, NOT the OSS repo) that runs the Argo refresh + local CLI/devspace install in one step
+- [x] 6.5 Smoke test end-to-end: `paddock dev claude` → local Claude Code edits sync + Bash runs in the sandbox
