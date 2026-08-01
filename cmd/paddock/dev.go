@@ -3,9 +3,42 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/urfave/cli/v3"
 )
+
+// ensureSession returns the session bound to the current directory, creating
+// and provisioning one only when there is no live binding — one sandbox per
+// project directory. This is what stops sandboxes from piling up: reopening a
+// project reuses its running sandbox instead of spawning another.
+func ensureSession(agent string, push, gitCreds, gitSigning bool) (string, error) {
+	if id := boundSession(); id != "" && sessionRunning(id) {
+		fmt.Printf("reusing session %s bound to this directory\n", id)
+		return id, nil
+	}
+	return provisionSession(agent, push, gitCreds, gitSigning)
+}
+
+// boundSession reads the session id recorded for this directory, if any.
+func boundSession() string {
+	b, err := os.ReadFile(".paddock/session")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// sessionRunning reports whether the server still has this session running (so a
+// reaped or removed binding is replaced rather than reused).
+func sessionRunning(id string) bool {
+	var loc location
+	if err := getJSON("/v1/sessions/"+id, &loc); err != nil {
+		return false
+	}
+	return loc.Status == "running"
+}
 
 // devCmd sets up local-harness mode in one step: provision a detached session
 // (uploading this directory and installing the developer's git identity /
@@ -33,12 +66,16 @@ func devCmd() *cli.Command {
 			if agent == "" {
 				return cli.Exit("which agent? e.g. paddock dev claude", 2)
 			}
-			id, err := provisionSession(agent, true, !c.Bool("no-git-credentials"), !c.Bool("no-git-signing"))
+			id, err := ensureSession(agent, true, !c.Bool("no-git-credentials"), !c.Bool("no-git-signing"))
 			if err != nil {
 				return err
 			}
 			if err := initLocal(id); err != nil {
 				return err
+			}
+			if syncRunning() {
+				fmt.Println("workspace sync already running for this directory")
+				return nil
 			}
 			detach := c.Bool("detach")
 			if !detach {

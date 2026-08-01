@@ -39,6 +39,9 @@ type Session struct {
 	Token     string    `json:"token,omitempty"` // returned once on create
 	Status    string    `json:"status"`          // running | deleted | failed | expired
 	CreatedAt time.Time `json:"created_at"`
+	// LastActive is bumped by session use (client heartbeat + activity); the
+	// idle reaper keys off it. Back-filled to CreatedAt for pre-migration rows.
+	LastActive time.Time `json:"last_active,omitempty"`
 
 	// Where the sandbox runs. Derived from server config rather than stored,
 	// and reported so clients never have to guess the cluster layout.
@@ -65,14 +68,56 @@ func NewStore(db *sql.DB) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("migrate sessions schema: %w", err)
 	}
+	// last_active arrived after the initial schema; add it to existing databases
+	// without dropping their rows. Old rows get NULL and fall back to created_at.
+	if err := addColumnIfMissing(db, "sessions", "last_active", "TEXT"); err != nil {
+		return nil, fmt.Errorf("migrate sessions.last_active: %w", err)
+	}
 	return &Store{db: db}, nil
 }
 
+// addColumnIfMissing runs an idempotent ALTER TABLE ADD COLUMN — SQLite has no
+// "ADD COLUMN IF NOT EXISTS", so we check table_info first.
+func addColumnIfMissing(db *sql.DB, table, col, typ string) error {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == col {
+			return nil // already present
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.Exec("ALTER TABLE " + table + " ADD COLUMN " + col + " " + typ)
+	return err
+}
+
 func (s *Store) insert(sess Session) error {
+	created := sess.CreatedAt.Format(time.RFC3339Nano)
 	_, err := s.db.Exec(
-		`INSERT INTO sessions (id, user, agent, budget_id, token, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO sessions (id, user, agent, budget_id, token, status, created_at, last_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		sess.ID, sess.User, sess.Agent, sess.BudgetID, sess.Token, sess.Status,
-		sess.CreatedAt.Format(time.RFC3339Nano),
+		created, created, // last_active starts equal to created_at
+	)
+	return err
+}
+
+// touch bumps a running session's last-activity to now; the idle reaper keys
+// off it. A no-op for sessions that are not running.
+func (s *Store) touch(id string) error {
+	_, err := s.db.Exec(
+		`UPDATE sessions SET last_active = ? WHERE id = ? AND status = ?`,
+		time.Now().UTC().Format(time.RFC3339Nano), id, statusRunning,
 	)
 	return err
 }
@@ -100,7 +145,7 @@ func (s *Store) scanOne(query, arg string) (Session, error) {
 }
 
 func (s *Store) list() ([]Session, error) {
-	rows, err := s.db.Query(`SELECT id, user, agent, budget_id, status, created_at FROM sessions ORDER BY created_at DESC`)
+	rows, err := s.db.Query(`SELECT id, user, agent, budget_id, status, created_at, last_active FROM sessions ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -109,11 +154,20 @@ func (s *Store) list() ([]Session, error) {
 	for rows.Next() {
 		var sess Session
 		var created string
-		if err := rows.Scan(&sess.ID, &sess.User, &sess.Agent, &sess.BudgetID, &sess.Status, &created); err != nil {
+		var lastActive sql.NullString
+		if err := rows.Scan(&sess.ID, &sess.User, &sess.Agent, &sess.BudgetID, &sess.Status, &created, &lastActive); err != nil {
 			return nil, err
 		}
 		if sess.CreatedAt, err = time.Parse(time.RFC3339Nano, created); err != nil {
 			return nil, err
+		}
+		// Pre-migration rows have no last_active; treat them as active since
+		// creation so the idle reaper measures from a sane baseline.
+		sess.LastActive = sess.CreatedAt
+		if lastActive.Valid && lastActive.String != "" {
+			if t, err := time.Parse(time.RFC3339Nano, lastActive.String); err == nil {
+				sess.LastActive = t
+			}
 		}
 		out = append(out, sess)
 	}
@@ -292,6 +346,7 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/sessions", h.listSessions)
 	mux.HandleFunc("GET /v1/sessions/{id}", h.getSession)
 	mux.HandleFunc("DELETE /v1/sessions/{id}", h.deleteSession)
+	mux.HandleFunc("POST /v1/sessions/{id}/heartbeat", h.heartbeat)
 	mux.HandleFunc("GET /v1/sessions/{id}/events", h.sessionEvents)
 	mux.HandleFunc("POST /v1/sessions/{id}/workspace", h.pushWorkspace)
 	mux.HandleFunc("GET /v1/sessions/{id}/workspace", h.pullWorkspace)
@@ -493,6 +548,29 @@ func (h *Handler) deleteSession(w http.ResponseWriter, r *http.Request) {
 	h.Audit.Record(audit.Event{
 		SessionID: id, Actor: sess.User, Kind: audit.KindSessionDeleted,
 	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// heartbeat marks a session active now. The local-harness sync supervisor calls
+// it periodically while a session is in use, so the idle reaper keeps an open
+// session warm and reclaims one whose harness has gone (closed, crashed, slept).
+func (h *Handler) heartbeat(w http.ResponseWriter, r *http.Request) {
+	sess, err := h.Sessions.get(r.PathValue("id"))
+	if errors.Is(err, sql.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !h.mayAccess(w, r, sess) {
+		return
+	}
+	if err := h.Sessions.touch(sess.ID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

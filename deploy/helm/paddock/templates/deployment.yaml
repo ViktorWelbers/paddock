@@ -104,6 +104,9 @@ spec:
             {{- with .Values.server.maxSessionAge }}
             - --max-session-age={{ . }}
             {{- end }}
+            {{- with .Values.server.maxSessionIdle }}
+            - --max-session-idle={{ . }}
+            {{- end }}
             {{- with .Values.server.maxSessionsPerUser }}
             - --max-sessions-per-user={{ . }}
             {{- end }}

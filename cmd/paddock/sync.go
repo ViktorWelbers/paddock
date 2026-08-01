@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/urfave/cli/v3"
 )
@@ -90,17 +92,23 @@ func syncSession(sessionID string, exclude []string, detach bool) error {
 	}
 
 	if detach {
-		return startSyncDetached(loc.Pod, args)
+		return startSupervisorDetached(sessionID, exclude)
 	}
-	return runSyncForeground(loc.Pod, args)
+	return runSyncForeground(sessionID, loc.Pod, args)
 }
 
-// runSyncForeground streams the sync until the user stops it. Ctrl-C in the
-// terminal already reaches devspace (same process group); the extra handler
-// also forwards a SIGTERM sent straight to paddock, and either way we exit
-// cleanly rather than surfacing the signal as an error.
-func runSyncForeground(pod string, args []string) error {
+// runSyncForeground supervises the sync until stopped: it runs devspace and, in
+// parallel, heartbeats the server so the session counts as in-use and the idle
+// reaper leaves it alone. Ctrl-C in the terminal already reaches devspace (same
+// process group); the handler also forwards a SIGTERM sent straight to paddock,
+// and either way we exit cleanly rather than surfacing the signal as an error.
+func runSyncForeground(sessionID, pod string, args []string) error {
 	fmt.Printf("syncing . <-> %s:/workspace  (Ctrl-C to stop)\n", pod)
+
+	stopHB := make(chan struct{})
+	go heartbeatLoop(sessionID, stopHB)
+	defer close(stopHB)
+
 	cmd := exec.Command("devspace", args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -124,10 +132,11 @@ func runSyncForeground(pod string, args []string) error {
 	return err
 }
 
-// startSyncDetached launches devspace in its own session so it survives this
-// CLI invocation, records its pid for `paddock down`, and returns. Output goes
-// to .paddock/sync.log.
-func startSyncDetached(pod string, args []string) error {
+// startSupervisorDetached re-execs paddock itself (running the foreground sync,
+// which owns both devspace and the heartbeat) in its own session so it survives
+// this CLI invocation, records its pid for `paddock down`/SessionEnd, and
+// returns. Output goes to .paddock/sync.log.
+func startSupervisorDetached(sessionID string, exclude []string) error {
 	if err := os.MkdirAll(".paddock", 0o755); err != nil {
 		return err
 	}
@@ -135,7 +144,15 @@ func startSyncDetached(pod string, args []string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command("devspace", args...)
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	childArgs := []string{"sync", sessionID}
+	for _, e := range exclude {
+		childArgs = append(childArgs, "--exclude", e)
+	}
+	cmd := exec.Command(self, childArgs...)
 	cmd.Stdout, cmd.Stderr = logf, logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // detach from this process group
 	if err := cmd.Start(); err != nil {
@@ -146,9 +163,54 @@ func startSyncDetached(pod string, args []string) error {
 		return err
 	}
 	_ = cmd.Process.Release()
-	fmt.Printf("workspace sync running in the background (. <-> %s:/workspace, pid %d)\n", pod, pid)
+	fmt.Printf("workspace sync running in the background (pid %d)\n", pid)
 	fmt.Println("logs: .paddock/sync.log   ·   stop + tear down: paddock down")
 	return nil
+}
+
+// heartbeatLoop marks the session active every couple of minutes while the sync
+// supervisor is alive, so the server's idle reaper keeps an in-use session warm
+// and reclaims one whose supervisor has gone (harness closed, crashed, slept).
+func heartbeatLoop(sessionID string, stop <-chan struct{}) {
+	sendHeartbeat(sessionID) // one immediately, so a fresh session is marked active
+	t := time.NewTicker(2 * time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			sendHeartbeat(sessionID)
+		}
+	}
+}
+
+func sendHeartbeat(sessionID string) {
+	req, err := apiRequest(http.MethodPost, "/v1/sessions/"+sessionID+"/heartbeat", nil)
+	if err != nil {
+		return
+	}
+	if resp, err := apiDo(req); err == nil {
+		_ = resp.Body.Close()
+	}
+}
+
+// syncRunning reports whether a background sync supervisor is alive for this
+// directory (its recorded pid still exists).
+func syncRunning() bool {
+	b, err := os.ReadFile(syncPidFile)
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 0 {
+		return false
+	}
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return p.Signal(syscall.Signal(0)) == nil // signal 0 just probes liveness
 }
 
 // stopDetachedSync stops a background sync started with --detach if one is

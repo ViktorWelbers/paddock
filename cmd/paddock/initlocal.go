@@ -39,7 +39,18 @@ func initLocal(sessionID string) error {
 	if err := os.WriteFile(filepath.Join(".paddock", "session"), []byte(sessionID+"\n"), 0o644); err != nil {
 		return err
 	}
+	if err := mergeSettings(func(s map[string]any) { addHook(s, "PreToolUse", "Bash", "paddock hook-bash") }); err != nil {
+		return err
+	}
+	fmt.Printf("bound this directory to session %s (.paddock/session)\n", sessionID)
+	fmt.Println("installed the Bash hook in .claude/settings.local.json")
+	fmt.Println("restart Claude Code — its Bash tool calls now run in the sandbox")
+	return nil
+}
 
+// mergeSettings reads .claude/settings.local.json, applies mutate to the parsed
+// JSON, and writes it back — preserving any settings the developer already has.
+func mergeSettings(mutate func(map[string]any)) error {
 	if err := os.MkdirAll(".claude", 0o755); err != nil {
 		return err
 	}
@@ -52,51 +63,63 @@ func initLocal(sessionID string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	added := addBashHook(settings)
+	mutate(settings)
 	b, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
-		return err
-	}
-
-	fmt.Printf("bound this directory to session %s (.paddock/session)\n", sessionID)
-	if added {
-		fmt.Printf("installed the Bash hook in %s\n", path)
-	} else {
-		fmt.Printf("Bash hook already present in %s\n", path)
-	}
-	fmt.Println("restart Claude Code — its Bash tool calls now run in the sandbox")
-	return nil
+	return os.WriteFile(path, append(b, '\n'), 0o644)
 }
 
-// addBashHook merges our PreToolUse Bash hook into a parsed settings map,
-// preserving any hooks the developer already configured. Returns false if an
-// equivalent hook was already there (idempotent re-runs). Works on the generic
-// map[string]any JSON shape so it never drops unrelated settings.
-func addBashHook(settings map[string]any) bool {
+// addHook merges a Claude Code hook for event (PreToolUse/SessionStart/...) into
+// the settings map, preserving any hooks already there and de-duplicating by
+// command. matcher is used for tool events (e.g. "Bash") and empty otherwise.
+func addHook(settings map[string]any, event, matcher, command string) {
 	hooks, _ := settings["hooks"].(map[string]any)
 	if hooks == nil {
 		hooks = map[string]any{}
 		settings["hooks"] = hooks
 	}
-	pre, _ := hooks["PreToolUse"].([]any)
-	for _, e := range pre {
-		if entryHasCommand(e, "paddock hook-bash") {
-			return false
+	entries, _ := hooks[event].([]any)
+	for _, e := range entries {
+		if entryHasCommand(e, command) {
+			return // already present
 		}
 	}
-	hooks["PreToolUse"] = append(pre, map[string]any{
-		"matcher": "Bash",
-		"hooks": []any{
-			map[string]any{"type": "command", "command": "paddock hook-bash"},
-		},
-	})
-	return true
+	entry := map[string]any{
+		"hooks": []any{map[string]any{"type": "command", "command": command}},
+	}
+	if matcher != "" {
+		entry["matcher"] = matcher
+	}
+	hooks[event] = append(entries, entry)
 }
 
-// entryHasCommand reports whether a PreToolUse entry already runs command.
+// addToolDeny ensures permissions.deny contains each named tool.
+func addToolDeny(settings map[string]any, tools ...string) {
+	perms, _ := settings["permissions"].(map[string]any)
+	if perms == nil {
+		perms = map[string]any{}
+		settings["permissions"] = perms
+	}
+	deny, _ := perms["deny"].([]any)
+	has := func(t string) bool {
+		for _, d := range deny {
+			if s, _ := d.(string); s == t {
+				return true
+			}
+		}
+		return false
+	}
+	for _, t := range tools {
+		if !has(t) {
+			deny = append(deny, t)
+		}
+	}
+	perms["deny"] = deny
+}
+
+// entryHasCommand reports whether a hook entry already runs command.
 func entryHasCommand(entry any, command string) bool {
 	m, ok := entry.(map[string]any)
 	if !ok {

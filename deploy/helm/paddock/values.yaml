@@ -71,6 +71,11 @@ server:
   # disables it, and a session then lives until `paddock rm`. Blunt on purpose:
   # a coding sandbox is ephemeral, and this caps standing exposure and cost.
   maxSessionAge: "24h"
+  # Idle timeout: tear down a session with no activity for this long, so a
+  # forgotten local-harness sandbox self-reaps once the harness closes/crashes
+  # (its sync supervisor stops heartbeating). Complements maxSessionAge. A Go
+  # duration; empty/0 disables idle reaping.
+  maxSessionIdle: ""
   # Concurrent-session ceilings. With the per-session namespace gone, so is its
   # ResourceQuota, so these are the only thing between a runaway `paddock run`
   # loop and every node in the cluster. maxSessionsPerUser bounds one developer;

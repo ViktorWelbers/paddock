@@ -147,3 +147,56 @@ func (h *Handler) ReapExpired(ctx context.Context, maxAge time.Duration) (int, e
 	}
 	return reaped, nil
 }
+
+// ReapIdle ends running sessions with no activity for longer than idle. Where
+// ReapExpired caps absolute lifetime, this reclaims sessions that are simply no
+// longer in use — the local-harness supervisor stops heartbeating when the
+// harness closes, crashes, or the machine sleeps, so a forgotten sandbox is
+// cleaned up on its own without the developer removing anything. idle <= 0
+// disables it. Like ReapExpired it keys off a stored timestamp, so it is safe
+// to run on a ticker.
+func (h *Handler) ReapIdle(ctx context.Context, idle time.Duration) (int, error) {
+	if idle <= 0 {
+		return 0, nil
+	}
+	sessions, err := h.Sessions.list()
+	if err != nil {
+		return 0, fmt.Errorf("list sessions: %w", err)
+	}
+	cutoff := time.Now().Add(-idle)
+
+	var reaped int
+	for _, s := range sessions {
+		last := s.LastActive
+		if last.IsZero() {
+			last = s.CreatedAt
+		}
+		if s.Status != statusRunning || !last.Before(cutoff) {
+			continue
+		}
+		if err := h.Provisioner.Delete(ctx, s.ID); err != nil {
+			slog.Error("reap: could not tear down idle sandbox", "session", s.ID, "error", err)
+			continue
+		}
+		if err := h.Sessions.setStatus(s.ID, statusExpired); err != nil {
+			slog.Error("reap: idle sandbox torn down but session not marked expired", "session", s.ID, "error", err)
+			continue
+		}
+		reaped++
+		slog.Info("reaped idle session",
+			"session", s.ID, "user", s.User, "idle", time.Since(last).Round(time.Second).String())
+		h.Audit.Record(audit.Event{
+			SessionID: s.ID, Actor: "paddock", Kind: audit.KindSessionExpired,
+			Payload: map[string]any{
+				"user":             s.User,
+				"reason":           "idle",
+				"idle_seconds":     int64(time.Since(last).Seconds()),
+				"max_idle_seconds": int64(idle.Seconds()),
+			},
+		})
+	}
+	if reaped > 0 {
+		slog.Info("reaped idle sessions", "count", reaped, "max_idle", idle.String())
+	}
+	return reaped, nil
+}

@@ -49,6 +49,7 @@ func main() {
 			"your project.",
 		Commands: []*cli.Command{
 			runCmd(),
+			initCmd(),
 			devCmd(),
 			downCmd(),
 			attachCmd(),
@@ -56,6 +57,8 @@ func main() {
 			syncCmd(),
 			initLocalCmd(),
 			hookBashCmd(),
+			hookSessionStartCmd(),
+			hookSessionEndCmd(),
 			pushCmd(),
 			pullCmd(),
 			lsCmd(),

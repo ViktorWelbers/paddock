@@ -247,3 +247,62 @@ func TestReapExpiredDisabledLeavesEverything(t *testing.T) {
 		t.Errorf("reaped %d (%v), want nothing when the cap is disabled", n, prov.deleted)
 	}
 }
+
+// A session with no activity past the idle window is reclaimed, even if it is
+// well within its absolute age — the local-harness case where the harness
+// closed or crashed and its sandbox should not linger.
+func TestReapIdleEndsInactiveSessions(t *testing.T) {
+	prov := &fakeProvisioner{}
+	h := testHandler(t, Config{AgentImages: map[string]string{"claude": "img"}, GatewayURL: "http://gw"})
+	h.Provisioner = prov
+
+	// Created (and last active, since insert seeds last_active=created_at) an
+	// hour ago — young by absolute age, but idle past a 20m window.
+	if err := h.Sessions.insert(Session{
+		ID: "idle", User: "viktor", Agent: "claude", BudgetID: "default",
+		Token: "pdk_idle", Status: statusRunning,
+		CreatedAt: time.Now().Add(-time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := h.ReapIdle(context.Background(), 20*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || !slices.Contains(prov.deleted, "idle") {
+		t.Fatalf("reaped=%d deleted=%v, want the idle sandbox torn down", n, prov.deleted)
+	}
+	sess, _ := h.Sessions.get("idle")
+	if sess.Status != statusExpired {
+		t.Errorf("status = %q, want %q", sess.Status, statusExpired)
+	}
+	if _, err := h.Sessions.ByToken("pdk_idle"); err == nil {
+		t.Error("a reaped session's token still authenticates")
+	}
+}
+
+// A heartbeat keeps a session alive: an old session that was touched recently
+// is not idle and must be spared.
+func TestReapIdleSparesRecentlyActive(t *testing.T) {
+	prov := &fakeProvisioner{}
+	h := testHandler(t, Config{AgentImages: map[string]string{"claude": "img"}, GatewayURL: "http://gw"})
+	h.Provisioner = prov
+
+	if err := h.Sessions.insert(Session{
+		ID: "warm", User: "viktor", Agent: "claude", BudgetID: "default",
+		Token: "pdk_warm", Status: statusRunning,
+		CreatedAt: time.Now().Add(-time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Sessions.touch("warm"); err != nil { // a fresh heartbeat
+		t.Fatal(err)
+	}
+	n, err := h.ReapIdle(context.Background(), 20*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 || len(prov.deleted) != 0 {
+		t.Errorf("reaped %d (%v), want nothing: it was just heartbeated", n, prov.deleted)
+	}
+}

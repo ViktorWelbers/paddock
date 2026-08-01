@@ -48,6 +48,7 @@ func main() {
 	namespace := flag.String("sandbox-namespace", "", "namespace sandboxes run in (empty = this pod's own, which is what the chart's Role grants; only set this if you bound the provisioner Role elsewhere)")
 	seedBudgetUSD := flag.Float64("seed-budget-usd", 25, "create a 'default' budget with this limit if none exists (dev convenience, 0 disables)")
 	maxSessionAge := flag.Duration("max-session-age", 0, "tear down sessions older than this and invalidate their tokens (0 = never; a sandbox then lives until `paddock rm`)")
+	maxSessionIdle := flag.Duration("max-session-idle", 0, "tear down sessions with no activity for this long (0 = never; complements --max-session-age for the local-harness mode where a forgotten sandbox should self-reap)")
 	maxSessionsPerUser := flag.Int("max-sessions-per-user", 0, "cap concurrent running sessions per user (0 = unlimited); a rejected create gets 429")
 	maxSessionsTotal := flag.Int("max-sessions-total", 0, "cap concurrent running sessions across the whole server (0 = unlimited); a rejected create gets 429")
 	authTokens := flag.String("auth-tokens", "", "JSON file of bearer tokens identifying API callers")
@@ -129,10 +130,10 @@ func main() {
 	}
 	cancelReconcile()
 
-	// Enforce the session TTL for as long as the server runs. Tied to ctx, so
-	// it stops with the rest on shutdown.
-	if *maxSessionAge > 0 {
-		go reapLoop(ctx, h, *maxSessionAge)
+	// Enforce the session TTLs for as long as the server runs — absolute age
+	// and/or idleness. Tied to ctx, so it stops with the rest on shutdown.
+	if *maxSessionAge > 0 || *maxSessionIdle > 0 {
+		go reapLoop(ctx, h, *maxSessionAge, *maxSessionIdle)
 	}
 
 	srv := &http.Server{Addr: *addr, Handler: h.Handler()}
@@ -155,19 +156,26 @@ func main() {
 	}
 }
 
-// reapLoop enforces the session TTL until ctx is cancelled. The sweep runs
-// often enough that a session dies close to its deadline, but not so often it
-// polls the store for nothing — a tenth of the max age, clamped to a sane
-// band. A blocked provisioner cannot wedge the loop: each sweep is bounded.
-func reapLoop(ctx context.Context, h *api.Handler, maxAge time.Duration) {
-	interval := maxAge / 10
+// reapLoop enforces the session TTLs (absolute age and/or idleness) until ctx
+// is cancelled. The sweep runs often enough that a session dies close to its
+// deadline, but not so often it polls the store for nothing — a tenth of the
+// smaller active timeout, clamped to a sane band. A blocked provisioner cannot
+// wedge the loop: each sweep is bounded.
+func reapLoop(ctx context.Context, h *api.Handler, maxAge, maxIdle time.Duration) {
+	// Pace off whichever timeout is active and shorter, so idle reaping is not
+	// starved by a long absolute cap.
+	pace := maxAge
+	if maxIdle > 0 && (pace <= 0 || maxIdle < pace) {
+		pace = maxIdle
+	}
+	interval := pace / 10
 	if interval < time.Minute {
 		interval = time.Minute
 	}
 	if interval > 15*time.Minute {
 		interval = 15 * time.Minute
 	}
-	log.Printf("session TTL: %s (sweeping every %s)", maxAge, interval)
+	log.Printf("session reaper: max-age=%s max-idle=%s (sweeping every %s)", maxAge, maxIdle, interval)
 
 	t := time.NewTicker(interval)
 	defer t.Stop()
@@ -179,6 +187,9 @@ func reapLoop(ctx context.Context, h *api.Handler, maxAge time.Duration) {
 			sweepCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 			if _, err := h.ReapExpired(sweepCtx, maxAge); err != nil {
 				log.Printf("reap expired sessions: %v", err)
+			}
+			if _, err := h.ReapIdle(sweepCtx, maxIdle); err != nil {
+				log.Printf("reap idle sessions: %v", err)
 			}
 			cancel()
 		}
