@@ -92,14 +92,16 @@ Requires the [DevSpace](https://devspace.sh) CLI for two-way workspace sync:
 ```sh
 brew install devspace
 cd ~/your-project
-paddock dev claude        # provisions a sandbox, binds this dir, starts two-way workspace sync
-# leave that running; then in another terminal, in the same directory:
-claude                    # your local Claude Code — its bash runs in the sandbox, edits sync both ways
+paddock dev claude --detach   # provision a sandbox, bind this dir, start sync in the background
+claude                        # your local Claude Code — its bash runs in the sandbox, edits sync
+paddock down                  # when you're done: stop the sync and remove the session
 ```
 
-`paddock dev` is three steps you can also run by hand: `paddock run claude --detach` (create the
-sandbox) → `paddock init-local <id>` (install the Bash-redirection hook) → `paddock sync <id>`
-(two-way file sync). `paddock exec <id> <cmd>` runs a single command in the sandbox directly.
+Drop `--detach` to hold the sync in the foreground instead (Ctrl-C stops it). `paddock dev` is
+three steps you can also run by hand — `paddock run claude --detach` (create the sandbox) →
+`paddock init-local <id>` (install the Bash-redirection hook) → `paddock sync <id>` (two-way file
+sync) — and `paddock exec <id> <cmd>` runs a single command in the sandbox directly. paddock owns
+the sync process either way, so you never manage `devspace` yourself.
 
 ## Your workspace in the sandbox
 

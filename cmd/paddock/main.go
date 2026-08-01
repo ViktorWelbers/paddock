@@ -50,6 +50,7 @@ func main() {
 		Commands: []*cli.Command{
 			runCmd(),
 			devCmd(),
+			downCmd(),
 			attachCmd(),
 			execCmd(),
 			syncCmd(),
