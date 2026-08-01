@@ -30,6 +30,14 @@ func boundSession() string {
 	return strings.TrimSpace(string(b))
 }
 
+// writeBoundSession records the session bound to this directory.
+func writeBoundSession(id string) error {
+	if err := os.MkdirAll(".paddock", 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(".paddock/session", []byte(id+"\n"), 0o644)
+}
+
 // sessionRunning reports whether the server still has this session running (so a
 // reaped or removed binding is replaced rather than reused).
 func sessionRunning(id string) bool {

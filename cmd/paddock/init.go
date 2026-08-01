@@ -16,31 +16,29 @@ func initCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "init",
 		Usage: "set up automatic local-harness mode for this directory (run once)",
-		Description: "Installs Claude Code lifecycle hooks so the sandbox is created/reused and\n" +
-			"synced automatically when you start your harness here — no `paddock dev`/`down`.\n" +
-			"Denies WebFetch/WebSearch by default (they run locally and bypass the governed\n" +
-			"sandbox egress); pass --allow-web-tools to keep them.",
+		Description: "Installs the coding harness's lifecycle integration so the sandbox is\n" +
+			"created/reused and synced automatically when you start it here — no\n" +
+			"`paddock dev`/`down`. Pick the harness with --agent (claude, opencode); the\n" +
+			"default is auto-detected. Denies native web tools by default (they run locally\n" +
+			"and bypass the governed sandbox egress); pass --allow-web-tools to keep them.",
 		Flags: []cli.Flag{
-			&cli.BoolFlag{Name: "allow-web-tools", Usage: "keep WebFetch/WebSearch enabled (ungoverned, unaudited network access)"},
+			&cli.StringFlag{Name: "agent", Usage: "harness to set up: claude, opencode (default: auto-detect)"},
+			&cli.BoolFlag{Name: "allow-web-tools", Usage: "keep the harness's native web tools enabled (ungoverned, unaudited network access)"},
 		},
 		Action: func(_ context.Context, c *cli.Command) error {
-			allowWeb := c.Bool("allow-web-tools")
-			err := mergeSettings(func(s map[string]any) {
-				addHook(s, "SessionStart", "", "paddock hook-session-start")
-				addHook(s, "SessionEnd", "", "paddock hook-session-end")
-				addHook(s, "PreToolUse", "Bash", "paddock hook-bash")
-				if !allowWeb {
-					addToolDeny(s, "WebFetch", "WebSearch")
-				}
-			})
+			a, err := selectAdapter(c.String("agent"))
 			if err != nil {
 				return err
 			}
-			fmt.Println("paddock local-harness mode is set up for this directory (.claude/settings.local.json)")
+			allowWeb := c.Bool("allow-web-tools")
+			if err := a.install(installOpts{allowWeb: allowWeb}); err != nil {
+				return err
+			}
+			fmt.Printf("paddock local-harness mode is set up for %s in this directory\n", a.name())
 			if allowWeb {
-				fmt.Println("WebFetch/WebSearch left enabled — note they run locally and are NOT governed or audited")
+				fmt.Println("native web tools left enabled — note they run locally and are NOT governed or audited")
 			} else {
-				fmt.Println("WebFetch/WebSearch denied (use sandboxed shell for governed, audited network access)")
+				fmt.Println("native web tools denied (use sandboxed shell for governed, audited network access)")
 			}
 			fmt.Println("just run your harness here — the sandbox is created/reused and synced automatically")
 			return nil
@@ -64,11 +62,14 @@ func hookSessionStartCmd() *cli.Command {
 }
 
 func hookSessionStart() error {
+	// agent "claude" is the sandbox toolbox image (git/node/python/…), independent
+	// of which local harness is driving — the harness runs on the laptop; the
+	// sandbox just executes its commands.
 	id, err := ensureSession("claude", true, true, false)
 	if err != nil {
 		return err
 	}
-	if err := initLocal(id); err != nil { // record the binding + ensure the Bash hook
+	if err := writeBoundSession(id); err != nil { // record the binding (the adapter installed the redirect at init)
 		return err
 	}
 	if syncRunning() {

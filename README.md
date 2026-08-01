@@ -92,16 +92,19 @@ Requires the [DevSpace](https://devspace.sh) CLI for two-way workspace sync:
 ```sh
 brew install devspace
 cd ~/your-project
-paddock init      # one-time: install the auto-lifecycle hooks for this directory
-claude            # that's it — your local Claude Code, sandbox created/reused + synced automatically
+paddock init            # Claude Code (auto-detected). Or: paddock init --agent opencode
+claude                  # (or `opencode`) — sandbox created/reused + synced automatically
 ```
 
-After `paddock init`, just run your harness: a `SessionStart` hook finds-or-creates **one** sandbox
-for the directory (reused on reopen, so they never pile up) and starts the two-way sync; Bash tool
-calls run in the sandbox; a `SessionEnd` hook stops the sync. Forgotten sandboxes self-reap once
-they go idle — you never start or stop anything by hand. `paddock init` also **denies
-`WebFetch`/`WebSearch`** by default, because they run in the local harness and would bypass the
-governed sandbox egress (`--allow-web-tools` keeps them, ungoverned).
+paddock supports multiple harnesses through per-harness adapters (`--agent claude|opencode`, more to
+come); each installs that harness's own hooks/plugin on a shared core. After `paddock init`, just run
+your harness: it finds-or-creates **one** sandbox for the directory (reused on reopen, so they never
+pile up) and starts the two-way sync; shell tool calls run in the sandbox; forgotten sandboxes
+self-reap once they go idle — you never start or stop anything by hand. `paddock init` also **denies
+the native web tools** (Claude's `WebFetch`/`WebSearch`, opencode's `webfetch`) by default, because
+they run in the local harness and would bypass the governed sandbox egress (`--allow-web-tools` keeps
+them, ungoverned). For Claude Code a `SessionEnd` hook also stops the sync on close; opencode has no
+such event yet, so end an opencode session with `paddock down` (or let the idle reaper reclaim it).
 
 Prefer explicit control? `paddock dev claude --detach` does it in one shot and `paddock down` tears
 it down; the pieces are `paddock exec <id> <cmd>` (one command in the sandbox), `paddock sync <id>`
