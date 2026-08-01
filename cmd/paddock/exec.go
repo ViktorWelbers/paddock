@@ -79,6 +79,9 @@ func execInSandbox(sessionID, command string) error {
 	if err != nil {
 		return err
 	}
+	// Running a command is activity: keep the session off the idle reaper. Async
+	// so it never adds latency to the command.
+	go sendHeartbeat(sessionID)
 	cfg, err := kubeConfig()
 	if err != nil {
 		return err

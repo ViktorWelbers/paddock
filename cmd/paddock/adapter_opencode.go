@@ -57,6 +57,7 @@ func opencodePlugin(allowWeb bool) string {
 // workspace sync are up. paddock (the CLI) must be on your PATH.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 
 export const paddock = async ({ $, directory }) => {
   // Ensure this directory's sandbox and two-way sync are running. Idempotent:
@@ -74,6 +75,20 @@ export const paddock = async ({ $, directory }) => {
       return "";
     }
   };
+
+  // Liveness heartbeat: while opencode runs, keep the session off the idle
+  // reaper. When opencode exits, this interval dies with it, heartbeats stop,
+  // and the server reclaims the sandbox on its own — no manual teardown. unref()
+  // so it never keeps opencode from exiting.
+  const beat = () => {
+    const id = sessionId();
+    if (id) {
+      try { spawn("paddock", ["heartbeat", id], { stdio: "ignore" }); } catch {}
+    }
+  };
+  beat();
+  const hb = setInterval(beat, 120000);
+  if (hb.unref) hb.unref();
 
   return {
     "tool.execute.before": async (input, output) => {

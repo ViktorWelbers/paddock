@@ -97,39 +97,74 @@ func syncSession(sessionID string, exclude []string, detach bool) error {
 	return runSyncForeground(sessionID, loc.Pod, args)
 }
 
-// runSyncForeground supervises the sync until stopped: it runs devspace and, in
-// parallel, heartbeats the server so the session counts as in-use and the idle
-// reaper leaves it alone. Ctrl-C in the terminal already reaches devspace (same
-// process group); the handler also forwards a SIGTERM sent straight to paddock,
-// and either way we exit cleanly rather than surfacing the signal as an error.
+// runSyncForeground supervises the sync until stopped. It runs devspace and a
+// liveness watchdog: if the bound session goes away (the idle reaper reclaimed
+// it after the harness closed/crashed, or `paddock down` removed it), the
+// watchdog stops devspace and exits, so a supervisor never outlives its session.
+// The heartbeat that keeps a session warm comes from the harness itself (see
+// `paddock heartbeat`), not from here — that is what lets the reaper reclaim a
+// session whose harness is gone. Ctrl-C / SIGTERM also stop it cleanly.
 func runSyncForeground(sessionID, pod string, args []string) error {
 	fmt.Printf("syncing . <-> %s:/workspace  (Ctrl-C to stop)\n", pod)
-
-	stopHB := make(chan struct{})
-	go heartbeatLoop(sessionID, stopHB)
-	defer close(stopHB)
+	// A detached supervisor recorded its pid; remove it on the way out however we
+	// exit (signal, watchdog, or devspace dying), so nothing thinks a dead sync
+	// is still running.
+	defer removeOwnSyncPid()
 
 	cmd := exec.Command("devspace", args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+
 	stopped := false
-	go func() {
-		<-sigs
+	stop := func() {
 		stopped = true
 		if cmd.Process != nil {
 			_ = cmd.Process.Signal(syscall.SIGTERM)
 		}
+	}
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	go func() { <-sigs; stop() }()
+
+	// Watchdog: once the session is gone, there is nothing to sync to.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		t := time.NewTicker(90 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				if !sessionRunning(sessionID) {
+					stop()
+					return
+				}
+			}
+		}
 	}()
+
 	err := cmd.Wait()
 	fmt.Println("\nworkspace sync stopped")
 	if stopped {
-		return nil // ending the sync on request is not a failure
+		return nil // ending the sync on request/reap is not a failure
 	}
 	return err
+}
+
+// removeOwnSyncPid clears .paddock/sync.pid if it points at this process, so a
+// supervisor that self-terminates leaves no stale pid behind.
+func removeOwnSyncPid() {
+	b, err := os.ReadFile(syncPidFile)
+	if err != nil {
+		return
+	}
+	if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid == os.Getpid() {
+		_ = os.Remove(syncPidFile)
+	}
 }
 
 // startSupervisorDetached re-execs paddock itself (running the foreground sync,
@@ -166,23 +201,6 @@ func startSupervisorDetached(sessionID string, exclude []string) error {
 	fmt.Printf("workspace sync running in the background (pid %d)\n", pid)
 	fmt.Println("logs: .paddock/sync.log   ·   stop + tear down: paddock down")
 	return nil
-}
-
-// heartbeatLoop marks the session active every couple of minutes while the sync
-// supervisor is alive, so the server's idle reaper keeps an in-use session warm
-// and reclaims one whose supervisor has gone (harness closed, crashed, slept).
-func heartbeatLoop(sessionID string, stop <-chan struct{}) {
-	sendHeartbeat(sessionID) // one immediately, so a fresh session is marked active
-	t := time.NewTicker(2 * time.Minute)
-	defer t.Stop()
-	for {
-		select {
-		case <-stop:
-			return
-		case <-t.C:
-			sendHeartbeat(sessionID)
-		}
-	}
 }
 
 func sendHeartbeat(sessionID string) {

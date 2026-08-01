@@ -59,6 +59,7 @@ func main() {
 			hookBashCmd(),
 			hookSessionStartCmd(),
 			hookSessionEndCmd(),
+			heartbeatCmd(),
 			pushCmd(),
 			pullCmd(),
 			lsCmd(),

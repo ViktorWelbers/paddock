@@ -103,8 +103,10 @@ pile up) and starts the two-way sync; shell tool calls run in the sandbox; forgo
 self-reap once they go idle — you never start or stop anything by hand. `paddock init` also **denies
 the native web tools** (Claude's `WebFetch`/`WebSearch`, opencode's `webfetch`) by default, because
 they run in the local harness and would bypass the governed sandbox egress (`--allow-web-tools` keeps
-them, ungoverned). For Claude Code a `SessionEnd` hook also stops the sync on close; opencode has no
-such event yet, so end an opencode session with `paddock down` (or let the idle reaper reclaim it).
+them, ungoverned). **Teardown is automatic for every harness:** while the harness is open it
+heartbeats the session; when you close it (or it crashes), the heartbeats stop and the server's idle
+reaper reclaims the sandbox on its own, and the local sync process self-terminates. You never run
+`paddock down` — though it's still there for an immediate teardown.
 
 Prefer explicit control? `paddock dev claude --detach` does it in one shot and `paddock down` tears
 it down; the pieces are `paddock exec <id> <cmd>` (one command in the sandbox), `paddock sync <id>`

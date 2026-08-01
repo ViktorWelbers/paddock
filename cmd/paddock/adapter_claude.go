@@ -24,6 +24,9 @@ func (claudeAdapter) install(o installOpts) error {
 		addHook(s, "SessionStart", "", "paddock hook-session-start")
 		addHook(s, "SessionEnd", "", "paddock hook-session-end")
 		addHook(s, "PreToolUse", "Bash", "paddock hook-bash")
+		// Stop fires after each response: a liveness signal so an open, active
+		// session stays warm and a closed/crashed one is reaped when it stops.
+		addHook(s, "Stop", "", "paddock heartbeat")
 		if !o.allowWeb {
 			addToolDeny(s, "WebFetch", "WebSearch")
 		}

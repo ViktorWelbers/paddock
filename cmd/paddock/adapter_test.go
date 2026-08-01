@@ -27,6 +27,7 @@ func TestOpencodePluginContent(t *testing.T) {
 	for _, want := range []string{
 		`"tool.execute.before"`, `input.tool === "bash"`, "paddock exec", "--b64",
 		`input.tool === "webfetch"`, "paddock hook-session-start",
+		"setInterval", "heartbeat", "unref", // liveness heartbeat for automatic teardown
 	} {
 		if !strings.Contains(p, want) {
 			t.Errorf("opencode plugin missing %q", want)
