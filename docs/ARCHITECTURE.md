@@ -12,6 +12,16 @@ Both server and gateway are single static Go binaries. MVP storage is SQLite (on
 
 ![Paddock architecture overview](img/architecture.png)
 
+**Two execution modes.** The diagram shows **in-pod** mode: the agent runs inside the sandbox, so
+model calls, egress, and tool execution are all forced through the gateway by construction — the
+Codespaces-style "remote-first" pattern, structurally unbypassable. **Local-harness** mode inverts
+this: the developer runs their own harness locally (with their own model credentials), and only the
+agent's *tool execution* is pushed into the sandbox — shell commands via a `PreToolUse` hook that
+rewrites them to `paddock exec`, and files via bidirectional workspace sync (`paddock sync`, built on
+DevSpace's tar-over-exec engine so it needs no SSH). Governed egress + audit for tool actions are
+preserved; model-call metering is not (the harness talks to the model directly). It's the standard
+"edit locally, execute remotely" split — see the README for the workflow.
+
 ## Session lifecycle
 
 1. `paddock run claude` → `POST /v1/sessions` on `paddock-server`.

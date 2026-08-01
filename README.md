@@ -72,6 +72,35 @@ k3d loop installs with authentication off, so there is nothing to save there. Th
 the sandbox, the agent's only route out is the Paddock gateway: no cluster API,
 no real keys, and no internet beyond the domains you allow.
 
+## Two ways to run
+
+You pick a mode per session:
+
+- **In-pod (default).** `paddock run claude` runs the agent *inside* the sandbox and attaches a
+  terminal. Model calls are metered through the gateway and the agent is contained by construction —
+  the strongest isolation, and the right choice when you want structural, unbypassable governance.
+- **Local-harness.** `paddock dev claude` runs *your own local* Claude Code, but redirects its shell
+  commands into the sandbox and keeps your files in sync with it. You get native local tooling and
+  your own model credentials, and paddock still governs the agent's *actions* — sandboxed execution,
+  allowlisted egress, full audit. Model calls are **not** metered in this mode; that trade is what
+  buys the local experience.
+
+### Local-harness quickstart
+
+Requires the [DevSpace](https://devspace.sh) CLI for two-way workspace sync:
+
+```sh
+brew install devspace
+cd ~/your-project
+paddock dev claude        # provisions a sandbox, binds this dir, starts two-way workspace sync
+# leave that running; then in another terminal, in the same directory:
+claude                    # your local Claude Code — its bash runs in the sandbox, edits sync both ways
+```
+
+`paddock dev` is three steps you can also run by hand: `paddock run claude --detach` (create the
+sandbox) → `paddock init-local <id>` (install the Bash-redirection hook) → `paddock sync <id>`
+(two-way file sync). `paddock exec <id> <cmd>` runs a single command in the sandbox directly.
+
 ## Your workspace in the sandbox
 
 `paddock run` uploads the current directory before attaching, because an agent

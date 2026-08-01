@@ -49,8 +49,10 @@ func main() {
 			"your project.",
 		Commands: []*cli.Command{
 			runCmd(),
+			devCmd(),
 			attachCmd(),
 			execCmd(),
+			syncCmd(),
 			initLocalCmd(),
 			hookBashCmd(),
 			pushCmd(),
@@ -235,7 +237,11 @@ func argOr(v, fallback string) string {
 	return v
 }
 
-func runSession(agent string, detach, push, gitCreds, gitSigning bool) error {
+// provisionSession creates a session for the current directory and performs the
+// one-time setup both modes share: upload the workspace and install the
+// developer's git identity, credentials, and signing key. It returns the new
+// session id. `run` attaches to it in-pod; `dev` binds it for local-harness use.
+func provisionSession(agent string, push, gitCreds, gitSigning bool) (string, error) {
 	// No "user" field: the server takes the owner from the credential, so
 	// claiming one here would be decorative at best and a lie at worst.
 	body, _ := json.Marshal(map[string]string{
@@ -244,24 +250,24 @@ func runSession(agent string, detach, push, gitCreds, gitSigning bool) error {
 	})
 	req, err := apiRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := apiDo(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("%s: %s", resp.Status, bytes.TrimSpace(raw))
+		return "", fmt.Errorf("%s: %s", resp.Status, bytes.TrimSpace(raw))
 	}
 	var sess struct {
 		ID    string `json:"id"`
 		Token string `json:"token"`
 	}
 	if err := json.Unmarshal(raw, &sess); err != nil {
-		return err
+		return "", err
 	}
 	fmt.Printf("session %s created\n", sess.ID)
 
@@ -305,11 +311,21 @@ func runSession(agent string, detach, push, gitCreds, gitSigning bool) error {
 		}
 	}
 
+	return sess.ID, nil
+}
+
+// runSession starts an in-pod session: provision it, then attach the agent's
+// TUI over the pod (unless --detach).
+func runSession(agent string, detach, push, gitCreds, gitSigning bool) error {
+	id, err := provisionSession(agent, push, gitCreds, gitSigning)
+	if err != nil {
+		return err
+	}
 	if detach {
-		fmt.Printf("sandbox is starting; attach with: paddock attach %s\n", sess.ID)
+		fmt.Printf("sandbox is starting; attach with: paddock attach %s\n", id)
 		return nil
 	}
-	return attachSession(sess.ID, []string{agent})
+	return attachSession(id, []string{agent})
 }
 
 func listSessions(all bool) error {
