@@ -42,6 +42,9 @@ const (
 	// A session outlived its TTL: its sandbox was torn down and its token
 	// invalidated, so an idle session cannot hold a credential indefinitely.
 	KindSessionExpired = "session.expired"
+	// A command was run in the sandbox via `paddock exec` (local-harness mode).
+	// Reported by the CLI for visibility — what the agent actually ran.
+	KindExecCommand = "exec.command"
 )
 
 type Event struct {
@@ -86,7 +89,16 @@ func (s *Store) Append(e Event) error {
 		`INSERT INTO audit_events (ts, session_id, actor, kind, payload) VALUES (?, ?, ?, ?, ?)`,
 		e.TS.Format(time.RFC3339Nano), e.SessionID, e.Actor, e.Kind, string(payload),
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	// Every audit event is also an operational log line, so `kubectl logs`
+	// shows the flow wherever it happens — the gateway logs egress/model/MCP
+	// calls, the control plane logs sessions/workspace/exec. The audit store is
+	// the durable record; this is the live view an operator watches.
+	slog.Info("audit",
+		"kind", e.Kind, "session", e.SessionID, "actor", e.Actor, "payload", e.Payload)
+	return nil
 }
 
 // Record appends an event that has already happened and cannot be taken

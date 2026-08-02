@@ -404,6 +404,12 @@ type Provisioner interface {
 	// which is not the same set the session store believes in — see
 	// api.Handler.Reconcile.
 	List(ctx context.Context) ([]string, error)
+	// Healthy reports the sessions whose pod is actually usable (Running or
+	// Pending). It excludes terminal pods — an evicted or crashed sandbox
+	// lingers as a Failed-phase object that List still counts, so the live
+	// reconcile keys off Healthy to notice a sandbox that has died under a
+	// still-"running" session.
+	Healthy(ctx context.Context) ([]string, error)
 }
 
 // Noop is used when no kubeconfig is configured: sessions exist in the
@@ -412,7 +418,8 @@ type Noop struct{}
 
 func (Noop) Create(context.Context, Spec) error     { return nil }
 func (Noop) Delete(context.Context, string) error   { return nil }
-func (Noop) List(context.Context) ([]string, error) { return nil, nil }
+func (Noop) List(context.Context) ([]string, error)    { return nil, nil }
+func (Noop) Healthy(context.Context) ([]string, error) { return nil, nil }
 
 // K8s provisions sandboxes on a real cluster, into Namespace (its own).
 type K8s struct {
@@ -470,6 +477,28 @@ func (k *K8s) List(ctx context.Context) ([]string, error) {
 		}
 	}
 	slices.Sort(out) // deterministic, so logs and tests read the same twice
+	return out, nil
+}
+
+// Healthy returns the sessions whose pod is Running or Pending — i.e. a sandbox
+// that is (or is still coming) up. Terminal pods (Failed/Succeeded, e.g. an
+// evicted workspace) are excluded, so the live reconcile can tell a working
+// sandbox from a dead one that only looks present.
+func (k *K8s) Healthy(ctx context.Context) ([]string, error) {
+	pods, err := k.Client.CoreV1().Pods(k.Namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSession})
+	if err != nil {
+		return nil, fmt.Errorf("list sandbox pods: %w", err)
+	}
+	var out []string
+	for _, p := range pods.Items {
+		switch p.Status.Phase {
+		case corev1.PodRunning, corev1.PodPending:
+			if id := p.Labels[labelSession]; id != "" {
+				out = append(out, id)
+			}
+		}
+	}
+	slices.Sort(out)
 	return out, nil
 }
 

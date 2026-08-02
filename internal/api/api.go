@@ -347,6 +347,7 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/sessions/{id}", h.getSession)
 	mux.HandleFunc("DELETE /v1/sessions/{id}", h.deleteSession)
 	mux.HandleFunc("POST /v1/sessions/{id}/heartbeat", h.heartbeat)
+	mux.HandleFunc("POST /v1/sessions/{id}/exec-log", h.execLog)
 	mux.HandleFunc("GET /v1/sessions/{id}/events", h.sessionEvents)
 	mux.HandleFunc("POST /v1/sessions/{id}/workspace", h.pushWorkspace)
 	mux.HandleFunc("GET /v1/sessions/{id}/workspace", h.pullWorkspace)
@@ -571,6 +572,37 @@ func (h *Handler) heartbeat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// execLog records a command the CLI ran in the sandbox via `paddock exec`
+// (local-harness mode), so the audit trail and the live logs show what the agent
+// actually ran — the sandbox's own stdout is empty because commands arrive over
+// exec, not as the pod's main process.
+func (h *Handler) execLog(w http.ResponseWriter, r *http.Request) {
+	sess, err := h.Sessions.get(r.PathValue("id"))
+	if errors.Is(err, sql.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !h.mayAccess(w, r, sess) {
+		return
+	}
+	var req struct {
+		Command string `json:"command"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	h.Audit.Record(audit.Event{
+		SessionID: sess.ID, Actor: sess.User, Kind: audit.KindExecCommand,
+		Payload: map[string]any{"command": req.Command},
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

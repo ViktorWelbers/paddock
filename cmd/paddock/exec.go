@@ -79,9 +79,10 @@ func execInSandbox(sessionID, command string) error {
 	if err != nil {
 		return err
 	}
-	// Running a command is activity: keep the session off the idle reaper. Async
-	// so it never adds latency to the command.
+	// Running a command is activity (keeps the session off the idle reaper) and
+	// worth recording (what the agent ran). Both async, so neither adds latency.
 	go sendHeartbeat(sessionID)
+	go logExec(sessionID, command)
 	cfg, err := kubeConfig()
 	if err != nil {
 		return err

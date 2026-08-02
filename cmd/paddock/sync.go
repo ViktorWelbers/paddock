@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -57,6 +59,41 @@ func syncCmd() *cli.Command {
 
 const syncPidFile = ".paddock/sync.pid"
 
+// syncExcludes keeps dependency/build/cache detritus out of the sandbox
+// workspace. Unbounded, it bloats the /workspace emptyDir past its limit and the
+// kubelet evicts the pod (reason: "Usage of EmptyDir volume exceeds the limit").
+// devspace's exclude patterns are gitignore-style, so we feed it the project's
+// own .gitignore — matching `paddock push` — plus paddock's control dir and a
+// safety net of the usual heavy offenders for projects without a .gitignore. The
+// agent rebuilds these in the sandbox anyway (npm install, venv, …).
+func syncExcludes(user []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		p = strings.TrimSpace(p)
+		if p == "" || strings.HasPrefix(p, "#") || strings.HasPrefix(p, "!") || seen[p] {
+			return
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	for _, p := range []string{
+		".paddock", "node_modules", ".venv", "venv", "__pycache__",
+		".mypy_cache", ".pytest_cache", ".gradle", ".cache",
+	} {
+		add(p)
+	}
+	if b, err := os.ReadFile(".gitignore"); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			add(line)
+		}
+	}
+	for _, e := range user {
+		add(e)
+	}
+	return out
+}
+
 // syncSession runs `devspace sync` for ./ <-> /workspace against the session's
 // pod. preferNewest resolves concrete conflicts by timestamp, which suits a tree
 // both sides mutate (local edits + in-sandbox commands, including .git state).
@@ -78,11 +115,7 @@ func syncSession(sessionID string, exclude []string, detach bool) error {
 		"--initial-sync", "preferNewest",
 		"--no-warn",
 	}
-	// paddock's own control files are not project content; syncing them into the
-	// sandbox is noise (and syncing the hook config into a pod that might be
-	// attached in-pod could loop), so keep .paddock out by default.
-	args = append(args, "--exclude", ".paddock")
-	for _, e := range exclude {
+	for _, e := range syncExcludes(exclude) {
 		args = append(args, "--exclude", e)
 	}
 	// paddock's kubeconfig convention (PADDOCK_KUBECONFIG) is not devspace's, so
@@ -208,6 +241,20 @@ func sendHeartbeat(sessionID string) {
 	if err != nil {
 		return
 	}
+	if resp, err := apiDo(req); err == nil {
+		_ = resp.Body.Close()
+	}
+}
+
+// logExec records a command run in the sandbox to the server's audit trail, so
+// an operator can see what the agent ran in local-harness mode. Best-effort.
+func logExec(sessionID, command string) {
+	body, _ := json.Marshal(map[string]string{"command": command})
+	req, err := apiRequest(http.MethodPost, "/v1/sessions/"+sessionID+"/exec-log", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
 	if resp, err := apiDo(req); err == nil {
 		_ = resp.Body.Close()
 	}

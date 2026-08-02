@@ -130,11 +130,13 @@ func main() {
 	}
 	cancelReconcile()
 
-	// Enforce the session TTLs for as long as the server runs — absolute age
-	// and/or idleness. Tied to ctx, so it stops with the rest on shutdown.
-	if *maxSessionAge > 0 || *maxSessionIdle > 0 {
-		go reapLoop(ctx, h, *maxSessionAge, *maxSessionIdle)
-	}
+	// Background maintenance for as long as the server runs: enforce the session
+	// TTLs (absolute age and/or idleness) and, against a real cluster, keep the
+	// store and the cluster reconciled so a sandbox that dies under a session
+	// (evicted, crashed) does not leave the session claiming to run. Reconcile is
+	// skipped with the no-op provisioner, which has no pods to compare against.
+	_, noCluster := provisioner.(sandbox.Noop)
+	go maintenanceLoop(ctx, h, *maxSessionAge, *maxSessionIdle, !noCluster)
 
 	srv := &http.Server{Addr: *addr, Handler: h.Handler()}
 	go func() {
@@ -161,12 +163,16 @@ func main() {
 // deadline, but not so often it polls the store for nothing — a tenth of the
 // smaller active timeout, clamped to a sane band. A blocked provisioner cannot
 // wedge the loop: each sweep is bounded.
-func reapLoop(ctx context.Context, h *api.Handler, maxAge, maxIdle time.Duration) {
+func maintenanceLoop(ctx context.Context, h *api.Handler, maxAge, maxIdle time.Duration, reconcile bool) {
 	// Pace off whichever timeout is active and shorter, so idle reaping is not
-	// starved by a long absolute cap.
+	// starved by a long absolute cap; with no TTL set, still sweep periodically
+	// for reconciliation.
 	pace := maxAge
 	if maxIdle > 0 && (pace <= 0 || maxIdle < pace) {
 		pace = maxIdle
+	}
+	if pace <= 0 {
+		pace = 5 * time.Minute
 	}
 	interval := pace / 10
 	if interval < time.Minute {
@@ -175,7 +181,7 @@ func reapLoop(ctx context.Context, h *api.Handler, maxAge, maxIdle time.Duration
 	if interval > 15*time.Minute {
 		interval = 15 * time.Minute
 	}
-	log.Printf("session reaper: max-age=%s max-idle=%s (sweeping every %s)", maxAge, maxIdle, interval)
+	log.Printf("maintenance: max-age=%s max-idle=%s reconcile=%t (sweeping every %s)", maxAge, maxIdle, reconcile, interval)
 
 	t := time.NewTicker(interval)
 	defer t.Stop()
@@ -185,6 +191,11 @@ func reapLoop(ctx context.Context, h *api.Handler, maxAge, maxIdle time.Duration
 			return
 		case <-t.C:
 			sweepCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			if reconcile {
+				if _, err := h.ReconcileLive(sweepCtx, api.ReconcileGrace); err != nil {
+					log.Printf("live reconcile: %v", err)
+				}
+			}
 			if _, err := h.ReapExpired(sweepCtx, maxAge); err != nil {
 				log.Printf("reap expired sessions: %v", err)
 			}

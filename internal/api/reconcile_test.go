@@ -17,6 +17,7 @@ import (
 // which is exactly what drifts from what the store believes.
 type fakeProvisioner struct {
 	live      []string
+	healthy   *[]string // nil = every live pod is healthy; set it to model dead (e.g. evicted) pods
 	deleted   []string
 	deleteErr error
 }
@@ -37,6 +38,13 @@ func (f *fakeProvisioner) Delete(_ context.Context, id string) error {
 
 func (f *fakeProvisioner) List(context.Context) ([]string, error) {
 	return slices.Clone(f.live), nil
+}
+
+func (f *fakeProvisioner) Healthy(context.Context) ([]string, error) {
+	if f.healthy != nil {
+		return slices.Clone(*f.healthy), nil
+	}
+	return slices.Clone(f.live), nil // by default, live pods are healthy
 }
 
 func sessionID(t *testing.T, rec *httptest.ResponseRecorder) string {
@@ -245,6 +253,59 @@ func TestReapExpiredDisabledLeavesEverything(t *testing.T) {
 	}
 	if n != 0 || len(prov.deleted) != 0 {
 		t.Errorf("reaped %d (%v), want nothing when the cap is disabled", n, prov.deleted)
+	}
+}
+
+// The exact incident: a sandbox is evicted (workspace over quota) so its pod
+// goes Failed but still exists as an object; the session row keeps saying
+// running. Live reconcile must notice the sandbox is not healthy, tear down the
+// remnants, and mark the session failed.
+func TestReconcileLiveFailsSessionWhoseSandboxDied(t *testing.T) {
+	none := []string{} // the evicted pod exists but is not healthy
+	prov := &fakeProvisioner{live: []string{"evicted"}, healthy: &none}
+	h := testHandler(t, Config{AgentImages: map[string]string{"claude": "img"}, GatewayURL: "http://gw"})
+	h.Provisioner = prov
+
+	if err := h.Sessions.insert(Session{
+		ID: "evicted", User: "viktor", Agent: "claude", BudgetID: "default",
+		Token: "pdk_evicted", Status: statusRunning,
+		CreatedAt: time.Now().Add(-10 * time.Minute), // past the grace period
+	}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := h.ReconcileLive(context.Background(), ReconcileGrace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || !slices.Contains(prov.deleted, "evicted") {
+		t.Fatalf("reconciled=%d deleted=%v, want the dead sandbox torn down", n, prov.deleted)
+	}
+	if sess, _ := h.Sessions.get("evicted"); sess.Status != statusFailed {
+		t.Errorf("status = %q, want %q", sess.Status, statusFailed)
+	}
+}
+
+// A just-created session whose pod is still coming up (not yet healthy) must be
+// left alone — the grace period exists so a seconds-old session is never
+// mistaken for a dead one.
+func TestReconcileLiveSparesYoungSessions(t *testing.T) {
+	none := []string{}
+	prov := &fakeProvisioner{live: []string{"young"}, healthy: &none}
+	h := testHandler(t, Config{AgentImages: map[string]string{"claude": "img"}, GatewayURL: "http://gw"})
+	h.Provisioner = prov
+
+	if err := h.Sessions.insert(Session{
+		ID: "young", User: "viktor", Agent: "claude", BudgetID: "default",
+		Token: "pdk_young", Status: statusRunning, CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := h.ReconcileLive(context.Background(), ReconcileGrace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 || len(prov.deleted) != 0 {
+		t.Errorf("reconciled %d (%v), want nothing: the pod may still be starting", n, prov.deleted)
 	}
 }
 
